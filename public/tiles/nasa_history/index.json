@@ -1,0 +1,66 @@
+{
+  "dates": [
+    "2026-09-15",
+    "2026-09-14",
+    "2026-09-13",
+    "2026-09-12",
+    "2026-09-11",
+    "2026-09-10",
+    "2026-09-09",
+    "2026-09-08",
+    "2026-09-07",
+    "2026-09-06"
+  ],
+  "items": [
+    {
+      "date": "2026-09-15",
+      "image": "/tiles/nasa_history/2026-09-15.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-15_clouds.png"
+    },
+    {
+      "date": "2026-09-14",
+      "image": "/tiles/nasa_history/2026-09-14.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-14_clouds.png"
+    },
+    {
+      "date": "2026-09-13",
+      "image": "/tiles/nasa_history/2026-09-13.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-13_clouds.png"
+    },
+    {
+      "date": "2026-09-12",
+      "image": "/tiles/nasa_history/2026-09-12.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-12_clouds.png"
+    },
+    {
+      "date": "2026-09-11",
+      "image": "/tiles/nasa_history/2026-09-11.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-11_clouds.png"
+    },
+    {
+      "date": "2026-09-10",
+      "image": "/tiles/nasa_history/2026-09-10.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-10_clouds.png"
+    },
+    {
+      "date": "2026-09-09",
+      "image": "/tiles/nasa_history/2026-09-09.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-09_clouds.png"
+    },
+    {
+      "date": "2026-09-08",
+      "image": "/tiles/nasa_history/2026-09-08.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-08_clouds.png"
+    },
+    {
+      "date": "2026-09-07",
+      "image": "/tiles/nasa_history/2026-09-07.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-07_clouds.png"
+    },
+    {
+      "date": "2026-09-06",
+      "image": "/tiles/nasa_history/2026-09-06.jpg",
+      "clouds": "/tiles/nasa_history/2026-09-06_clouds.png"
+    }
+  ]
+}

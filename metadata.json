@@ -1,0 +1,6 @@
+{
+  "name": "Kurdistan Volumetric Weather Simulation",
+  "description": "Live 3D Kurdistan & Northern Iraq terrain with real high-resolution satellite imagery, digital elevation model, and real-time live Open-Meteo weather telemetry.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
