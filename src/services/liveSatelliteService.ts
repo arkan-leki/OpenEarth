@@ -114,28 +114,90 @@ export function getNasaGibsWmsUrl(
 }
 
 /**
- * Detects if a loaded image is a dummy empty/black placeholder tile returned by NASA GIBS.
- * When an orbital pass has not occurred yet (e.g. early morning before 10:30 AM local time)
- * or is downlinking, NASA returns a tiny ~1.8KB black tile.
+ * Detects if a loaded satellite image is blank/black OR corrupted by a "white filter",
+ * orbital swath gap (pure white fill), or massive half-image overexposure/glare.
+ *
+ * Normal clean satellite passes over Kurdistan have avgLum ~ 134..148 and balanced halves.
+ * Bad passes (e.g. MODIS swath edge washout or partial downlink) have half the frame
+ * white-filtered (avgLum > 152, clipped white blocks, or strong Left/Right brightness asymmetry).
  */
 export function isBlankSatelliteImage(img: HTMLImageElement | HTMLCanvasElement): boolean {
   try {
+    const W = 64;
+    const H = 64;
     const canvas = document.createElement('canvas');
-    canvas.width = 32;
-    canvas.height = 32;
+    canvas.width = W;
+    canvas.height = H;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     if (!ctx) return false;
-    ctx.drawImage(img, 0, 0, 32, 32);
-    const data = ctx.getImageData(0, 0, 32, 32).data;
+    ctx.drawImage(img, 0, 0, W, H);
+    const data = ctx.getImageData(0, 0, W, H).data;
+
+    const total = W * H;
     let totalLum = 0;
     let blackPixels = 0;
-    for (let i = 0; i < data.length; i += 4) {
-      const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      totalLum += lum;
-      if (lum < 6) blackPixels++;
+    let clippedWhitePixels = 0;
+    let leftLumSum = 0;
+    let rightLumSum = 0;
+    let leftWhiteFilterPixels = 0;
+    let rightWhiteFilterPixels = 0;
+
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const i = (y * W + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        const warmth = r - b;
+
+        totalLum += lum;
+        if (lum < 8) blackPixels++;
+
+        // Pure white or near-white orbital swath no-data fill
+        if (r > 236 && g > 236 && b > 236) {
+          clippedWhitePixels++;
+        }
+
+        // White-filtered / washed-out pixel (high brightness + low warmth across terrain)
+        const isWashedWhite = lum > 164 && warmth < 22;
+
+        if (x < W / 2) {
+          leftLumSum += lum;
+          if (isWashedWhite) leftWhiteFilterPixels++;
+        } else {
+          rightLumSum += lum;
+          if (isWashedWhite) rightWhiteFilterPixels++;
+        }
+      }
     }
-    const avgLum = totalLum / (32 * 32);
-    return avgLum < 12 || blackPixels > (32 * 32 * 0.2);
+
+    const avgLum = totalLum / total;
+    const leftAvgLum = leftLumSum / (total / 2);
+    const rightAvgLum = rightLumSum / (total / 2);
+    const leftWhiteFrac = leftWhiteFilterPixels / (total / 2);
+    const rightWhiteFrac = rightWhiteFilterPixels / (total / 2);
+
+    // 1. Reject black / missing orbital pass
+    if (avgLum < 15 || blackPixels > total * 0.15) return true;
+
+    // 2. Reject passes with pure-white orbital swath gaps (> 2.5% clipped white)
+    if (clippedWhitePixels > total * 0.025) return true;
+
+    // 3. Reject passes with massive overall brightness / swath white-filter washout (clean Iraq passes are 134..148)
+    if (avgLum > 151.5) return true;
+
+    // 4. Reject passes where one half of the image is white-filtered compared to the other half
+    if (
+      Math.abs(leftAvgLum - rightAvgLum) > 18.0 ||
+      Math.abs(leftWhiteFrac - rightWhiteFrac) > 0.20 ||
+      leftWhiteFrac > 0.30 ||
+      rightWhiteFrac > 0.30
+    ) {
+      return true;
+    }
+
+    return false;
   } catch {
     return false;
   }
@@ -213,16 +275,22 @@ export async function loadRobustSatelliteImage(
     const effectiveYesterdayDate = isTodayPassReadyOnGibs ? yesterdayIso : twoDaysAgoIso;
     candidateUrls.push(
       {
+        url: getNasaGibsWmsUrl('VIIRS_SNPP_CorrectedReflectance_TrueColor', effectiveYesterdayDate, 1280, 1024),
+        date: effectiveYesterdayDate,
+        isPending: false,
+        note: `NASA VIIRS SNPP Orbital Pass (Yesterday • ${effectiveYesterdayDate})`
+      },
+      {
+        url: getNasaGibsWmsUrl('VIIRS_NOAA20_CorrectedReflectance_TrueColor', effectiveYesterdayDate, 1280, 1024),
+        date: effectiveYesterdayDate,
+        isPending: false,
+        note: `NASA VIIRS NOAA-20 Orbital Pass (Yesterday • ${effectiveYesterdayDate})`
+      },
+      {
         url: getNasaGibsWmsUrl('MODIS_Aqua_CorrectedReflectance_TrueColor', effectiveYesterdayDate, 1280, 1024),
         date: effectiveYesterdayDate,
         isPending: false,
         note: `NASA MODIS Aqua Orbital Pass (Yesterday • ${effectiveYesterdayDate})`
-      },
-      {
-        url: getNasaGibsWmsUrl('VIIRS_SNPP_CorrectedReflectance_TrueColor', effectiveYesterdayDate, 1280, 1024),
-        date: effectiveYesterdayDate,
-        isPending: false,
-        note: `NASA VIIRS Orbital Pass (Yesterday • ${effectiveYesterdayDate})`
       },
       {
         url: '/tiles/nasa_history/2026-09-08.jpg',
@@ -242,22 +310,40 @@ export async function loadRobustSatelliteImage(
           : `NASA GIBS Confirmed Orbital Pass (${date})`
       },
       {
-        url: getNasaGibsWmsUrl('MODIS_Aqua_CorrectedReflectance_TrueColor', date, 1280, 1024),
+        url: getNasaGibsWmsUrl('VIIRS_SNPP_CorrectedReflectance_TrueColor', date, 1280, 1024),
         date: date,
         isPending: false,
-        note: `NASA MODIS Aqua Orbital Pass (${date})`
+        note: `NASA VIIRS SNPP Orbital Pass (${date})`
       },
       {
-        url: getNasaGibsWmsUrl('MODIS_Aqua_CorrectedReflectance_TrueColor', yesterdayIso, 1280, 1024),
-        date: yesterdayIso,
-        isPending: date === todayIso,
-        note: `NASA Latest Complete Orbital Pass (${yesterdayIso})`
+        url: getNasaGibsWmsUrl('VIIRS_NOAA20_CorrectedReflectance_TrueColor', date, 1280, 1024),
+        date: date,
+        isPending: false,
+        note: `NASA VIIRS NOAA-20 Orbital Pass (${date})`
+      },
+      {
+        url: getNasaGibsWmsUrl('MODIS_Terra_CorrectedReflectance_TrueColor', date, 1280, 1024),
+        date: date,
+        isPending: false,
+        note: `NASA MODIS Terra Orbital Pass (${date})`
       },
       {
         url: getNasaGibsWmsUrl('VIIRS_SNPP_CorrectedReflectance_TrueColor', yesterdayIso, 1280, 1024),
         date: yesterdayIso,
         isPending: date === todayIso,
-        note: `NASA VIIRS Latest Complete Orbital Pass (${yesterdayIso})`
+        note: `NASA VIIRS Latest Clean Orbital Pass (${yesterdayIso})`
+      },
+      {
+        url: getNasaGibsWmsUrl('MODIS_Terra_CorrectedReflectance_TrueColor', yesterdayIso, 1280, 1024),
+        date: yesterdayIso,
+        isPending: date === todayIso,
+        note: `NASA MODIS Terra Latest Clean Pass (${yesterdayIso})`
+      },
+      {
+        url: getNasaGibsWmsUrl('VIIRS_NOAA20_CorrectedReflectance_TrueColor', yesterdayIso, 1280, 1024),
+        date: yesterdayIso,
+        isPending: date === todayIso,
+        note: `NASA VIIRS NOAA-20 Latest Clean Pass (${yesterdayIso})`
       },
       {
         url: '/tiles/nasa_history/2026-09-07.jpg',

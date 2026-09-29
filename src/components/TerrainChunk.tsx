@@ -19,6 +19,9 @@ interface TerrainChunkProps {
   terrainExaggeration?: number;
   customTexture?: THREE.Texture | null;
   phenomenaTexture?: THREE.Texture | null;
+  cloudShadowDepthTexture?: THREE.Texture | null;
+  cloudBaseY?: number;
+  cloudTopY?: number;
   sunPosition?: SunPositionResult;
 }
 
@@ -26,8 +29,9 @@ interface TerrainChunkProps {
  * Renders a 3D Topographic Chunk of Northern Iraq & Kurdistan.
  * - Ground texture is ALWAYS the crisp High-Definition Kurdistan Orthomosaic (HD Base),
  *   or HD Base + Live Doppler Radar when in radar mode.
- * - Injects physical Ground Snow Cover (on high Zagros alpine peaks & freezing ridges)
- *   and soft 3D Cloud Shadows from the active NASA satellite pass with fluid GSAP transitions.
+ * - Uses Secondary Depth-Buffer-Based Projection (`uCloudShadowDepth`) for cloud shadows
+ *   on the 3D terrain, modulating shadow intensity by the multi-octave FBM density map
+ *   and true terrain-to-cloud elevation depth parallax (`vWorldPos.y` vs `uCloudBaseY..uCloudTopY`).
  */
 export const TerrainChunk: React.FC<TerrainChunkProps> = ({
   gridX,
@@ -37,6 +41,9 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
   terrainExaggeration = 1.35,
   customTexture = null,
   phenomenaTexture = null,
+  cloudShadowDepthTexture = null,
+  cloudBaseY = 4400,
+  cloudTopY = 6600,
   sunPosition
 }) => {
   const [demLoaded, setDemLoaded] = useState(false);
@@ -44,15 +51,21 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
   const shaderUniformsRef = useRef<{
     uPhenomena: { value: THREE.Texture | null };
     uPhenomenaPrev: { value: THREE.Texture | null };
+    uCloudShadowDepth: { value: THREE.Texture | null };
     uTransitionProgress: { value: number };
     uSunDir: { value: THREE.Vector3 };
     uTerrainExaggeration: { value: number };
+    uCloudBaseY: { value: number };
+    uCloudTopY: { value: number };
   }>({
     uPhenomena: { value: phenomenaTexture },
     uPhenomenaPrev: { value: phenomenaTexture },
+    uCloudShadowDepth: { value: cloudShadowDepthTexture },
     uTransitionProgress: { value: 1.0 },
     uSunDir: { value: new THREE.Vector3(0.55, 0.78, 0.28).normalize() },
-    uTerrainExaggeration: { value: terrainExaggeration }
+    uTerrainExaggeration: { value: terrainExaggeration },
+    uCloudBaseY: { value: cloudBaseY },
+    uCloudTopY: { value: cloudTopY }
   });
 
   useEffect(() => {
@@ -94,7 +107,6 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     );
   }, [gridX, gridY, demLoaded, terrainExaggeration, isSelected]);
 
-  // Always use the crisp HD Base texture unless a radar composite is explicitly supplied
   const satelliteTexture = useMemo(() => {
     if (customTexture) return customTexture;
     return getKurdistanSatelliteTexture('hd');
@@ -102,6 +114,9 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
 
   useFrame(() => {
     shaderUniformsRef.current.uTerrainExaggeration.value = terrainExaggeration;
+    shaderUniformsRef.current.uCloudShadowDepth.value = cloudShadowDepthTexture;
+    shaderUniformsRef.current.uCloudBaseY.value = cloudBaseY;
+    shaderUniformsRef.current.uCloudTopY.value = cloudTopY;
     if (sunPosition) {
       shaderUniformsRef.current.uSunDir.value.copy(sunPosition.sunDirection);
     }
@@ -111,9 +126,12 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     return (shader: THREE.WebGLProgramParametersWithUniforms) => {
       shader.uniforms.uPhenomena = shaderUniformsRef.current.uPhenomena;
       shader.uniforms.uPhenomenaPrev = shaderUniformsRef.current.uPhenomenaPrev;
+      shader.uniforms.uCloudShadowDepth = shaderUniformsRef.current.uCloudShadowDepth;
       shader.uniforms.uTransitionProgress = shaderUniformsRef.current.uTransitionProgress;
       shader.uniforms.uSunDir = shaderUniformsRef.current.uSunDir;
       shader.uniforms.uTerrainExaggeration = shaderUniformsRef.current.uTerrainExaggeration;
+      shader.uniforms.uCloudBaseY = shaderUniformsRef.current.uCloudBaseY;
+      shader.uniforms.uCloudTopY = shaderUniformsRef.current.uCloudTopY;
 
       shader.vertexShader = shader.vertexShader.replace(
         '#include <common>',
@@ -135,9 +153,12 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         `#include <common>
         uniform sampler2D uPhenomena;
         uniform sampler2D uPhenomenaPrev;
+        uniform sampler2D uCloudShadowDepth;
         uniform float uTransitionProgress;
         uniform vec3 uSunDir;
         uniform float uTerrainExaggeration;
+        uniform float uCloudBaseY;
+        uniform float uCloudTopY;
         varying vec3 vWorldPos;
         varying vec3 vWorldNorm;`
       );
@@ -151,7 +172,8 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
           (vWorldPos.z + 80000.0) / 160000.0
         ), 0.002, 0.998);
 
-        vec4 phenom = texture2D(uPhenomena, domainUv) * clamp(uTransitionProgress, 0.0, 1.0);
+        float transProg = clamp(uTransitionProgress, 0.0, 1.0);
+        vec4 phenom = texture2D(uPhenomena, domainUv) * transProg;
         float satSnowCover = phenom.r;
 
         // 1. Real Ground Snow Cover (strictly from real satellite snow detection / freezing snow depth)
@@ -164,15 +186,45 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
           diffuseColor.rgb = mix(diffuseColor.rgb, snowAlbedo, totalSnowCover);
         }
 
-        // 2. Soft 3D Cloud Shadows projected onto the HD Base terrain along solar vector
-        vec2 shadowOffset = uSunDir.xz * (2600.0 / max(0.25, uSunDir.y));
-        vec2 shadowUv = clamp(vec2(
-          (vWorldPos.x - shadowOffset.x + 120000.0) / 240000.0,
-          (vWorldPos.z - shadowOffset.y + 80000.0) / 160000.0
+        // 2. Secondary Depth-Buffer-Based Projection for Cloud Shadows Modulated by Multi-Octave FBM Density:
+        // Step A: Initial depth-parallax ray projection from terrain elevation vWorldPos.y to uCloudBaseY
+        float sunElevY = max(0.22, uSunDir.y);
+        float baseDepthDelta = max(150.0, uCloudBaseY - vWorldPos.y);
+        vec2 initialRayXZ = vWorldPos.xz + uSunDir.xz * (baseDepthDelta / sunElevY);
+        vec2 initialShadowUv = clamp(vec2(
+          (initialRayXZ.x + 120000.0) / 240000.0,
+          (initialRayXZ.y + 80000.0) / 160000.0
         ), 0.002, 0.998);
-        float cloudAbove = texture2D(uPhenomena, shadowUv).a * clamp(uTransitionProgress, 0.0, 1.0);
-        float cloudShadow = 1.0 - smoothstep(0.12, 0.75, cloudAbove) * 0.36;
-        diffuseColor.rgb *= cloudShadow;`
+
+        // Read effective cloud caster depth (G channel) from the secondary FBM shadow depth buffer
+        vec4 depthPass1 = texture2D(uCloudShadowDepth, initialShadowUv);
+        float effectiveCasterHeight = mix(uCloudBaseY, uCloudTopY, depthPass1.g);
+
+        // Step B: Refined 2-step Depth-Buffer Parallax Projection using actual cloud-caster height vs terrain depth
+        float refinedDepthDelta = max(150.0, effectiveCasterHeight - vWorldPos.y);
+        vec2 refinedRayXZ = vWorldPos.xz + uSunDir.xz * (refinedDepthDelta / sunElevY);
+        vec2 refinedShadowUv = clamp(vec2(
+          (refinedRayXZ.x + 120000.0) / 240000.0,
+          (refinedRayXZ.y + 80000.0) / 160000.0
+        ), 0.002, 0.998);
+
+        // Sample FBM optical depth (R), FBM fringe penumbra (B), and Beer-Lambert occlusion (A)
+        vec4 fbmShadowSample = texture2D(uCloudShadowDepth, refinedShadowUv);
+        float fbmOpticalDepth = fbmShadowSample.r * transProg;
+        float fbmPenumbraMod  = mix(0.72, 1.25, fbmShadowSample.b);
+        float fbmShadowAlpha  = fbmShadowSample.a * fbmPenumbraMod * transProg;
+
+        // Modulate shadow intensity by multi-octave FBM optical depth & terrain slope sun-incidence
+        float sunSlopeFactor = smoothstep(-0.15, 0.45, dot(vWorldNorm, uSunDir));
+        float shadowDarkening = clamp(
+          (fbmShadowAlpha * 0.65 + fbmOpticalDepth * 0.35) * 0.44 * (0.65 + 0.35 * sunSlopeFactor),
+          0.0,
+          0.46
+        );
+
+        // Cool atmospheric Rayleigh tint inside FBM-projected cloud shadows
+        vec3 shadowedTerrain = diffuseColor.rgb * vec3(0.84, 0.89, 0.96) * (1.0 - shadowDarkening);
+        diffuseColor.rgb = mix(diffuseColor.rgb, shadowedTerrain, smoothstep(0.01, 0.12, shadowDarkening));`
       );
     };
   }, []);

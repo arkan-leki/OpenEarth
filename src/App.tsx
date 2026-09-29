@@ -67,6 +67,9 @@ export default function App() {
   // Satellite Imagery & Meteorological Radar modal open state
   const [isSatelliteModalOpen, setIsSatelliteModalOpen] = useState<boolean>(false);
 
+  // Eye button state to hide all UI panels, bars, and 3D pins for an unobstructed view
+  const [hideAll, setHideAll] = useState<boolean>(false);
+
   // Live Satellite and Radar Map Source
   const [satelliteMode, setSatelliteMode] = useState<SatelliteSourceMode>('nasa_today');
   const [satelliteDate, setSatelliteDate] = useState<string>(() => getTodayDateIso(0));
@@ -408,7 +411,7 @@ export default function App() {
         shaderParams={shaderParams}
         classification={activeClassification}
         wireframe={false}
-        showPins={showPins}
+        showPins={!hideAll && showPins}
         showClouds={showClouds}
         showRain={showRain}
         activeMaxPrecipitation={activeMaxPrecipitation}
@@ -424,37 +427,46 @@ export default function App() {
       />
 
       {/* 2. Sleek Floating Top Bar: Branding, Live Date, Landmark Selector & Satellite Modal Button */}
-      <ZoomEarthTopBar
-        onFlyTo={handleFlyTo}
-        selectedLandmarkId={selectedLandmarkId}
-        onSelectLandmark={handleSelectLandmark}
-        currentStationTemp={currentStation?.temperature ?? 28}
-        currentStationCondition={currentStation?.condition ?? 'Partly Cloudy'}
-        onOpenSatelliteModal={() => setIsSatelliteModalOpen(true)}
-        satelliteMode={satelliteMode}
-        onChangeSatelliteMode={handleChangeSatelliteMode}
-        satelliteDate={effectiveSatelliteDate}
-        satelliteCloudCoveragePct={activeCloudCoveragePct}
-        isSatelliteCloudLoading={isSatelliteCloudLoading}
-        isTodayPending={satelliteCloudAnalysis?.isTodayPending}
-        actualPassDate={satelliteCloudAnalysis?.date}
-        isDaytimeMode={isDaytimeMode}
-        onToggleDaytimeMode={() => setIsDaytimeMode(prev => !prev)}
-      />
+      {!hideAll && (
+        <ZoomEarthTopBar
+          onFlyTo={handleFlyTo}
+          selectedLandmarkId={selectedLandmarkId}
+          onSelectLandmark={handleSelectLandmark}
+          currentStationTemp={currentStation?.temperature ?? 28}
+          currentStationCondition={currentStation?.condition ?? 'Partly Cloudy'}
+          onOpenSatelliteModal={() => setIsSatelliteModalOpen(true)}
+          satelliteMode={satelliteMode}
+          onChangeSatelliteMode={handleChangeSatelliteMode}
+          satelliteDate={effectiveSatelliteDate}
+          satelliteCloudCoveragePct={activeCloudCoveragePct}
+          isSatelliteCloudLoading={isSatelliteCloudLoading}
+          isTodayPending={satelliteCloudAnalysis?.isTodayPending}
+          actualPassDate={satelliteCloudAnalysis?.date}
+          isDaytimeMode={isDaytimeMode}
+          onToggleDaytimeMode={() => setIsDaytimeMode(prev => !prev)}
+        />
+      )}
 
       {/* 3. Floating Hanoi Dynamic Sun Position, Shadow & Time Controller */}
-      <HanoiSolarController
-        sunPosition={sunPosition}
-        isLiveTime={isLiveTime}
-        simulatedMinutes={simulatedMinutes}
-        onToggleLiveTime={setIsLiveTime}
-        onSetSimulatedMinutes={setSimulatedMinutes}
-        isDaytimeMode={isDaytimeMode}
-        onToggleDaytimeMode={setIsDaytimeMode}
-      />
+      {!hideAll && (
+        <HanoiSolarController
+          sunPosition={sunPosition}
+          isLiveTime={isLiveTime}
+          simulatedMinutes={simulatedMinutes}
+          onToggleLiveTime={setIsLiveTime}
+          onSetSimulatedMinutes={setSimulatedMinutes}
+          isDaytimeMode={isDaytimeMode}
+          onToggleDaytimeMode={setIsDaytimeMode}
+        />
+      )}
 
-      {/* 4. Floating Tool Dock (Right side: Satellite Viewer, Daytime, Clouds, Rain, Pins, Orbit, Reset, Tuning) */}
+      {/* 4. Floating Tool Dock (Right side: Eye Hide All, Satellite Viewer, Daytime, Clouds, Rain, Pins, Orbit, Reset, Tuning) */}
       <ZoomEarthFloatingControls
+        hideAll={hideAll}
+        onToggleHideAll={() => {
+          setHideAll(prev => !prev);
+          setIsSatelliteModalOpen(false);
+        }}
         isDaytimeMode={isDaytimeMode}
         onToggleDaytimeMode={() => setIsDaytimeMode(prev => !prev)}
         showClouds={showClouds}
@@ -472,30 +484,34 @@ export default function App() {
       />
 
       {/* 5. Live Weather & Landmark Telemetry Card (Bottom Left, Minimizeable) */}
-      <NorthVietnamWeatherCard
-        station={currentStation}
-        selectedLandmarkId={selectedLandmarkId}
-        onSelectLandmarkId={handleSelectLandmarkById}
-        isMinimized={isFeedMinimized}
-        onToggleMinimize={() => setIsFeedMinimized(prev => !prev)}
-        onOpenSatelliteModal={() => setIsSatelliteModalOpen(true)}
-        sunPosition={sunPosition}
-      />
+      {!hideAll && (
+        <NorthVietnamWeatherCard
+          station={currentStation}
+          selectedLandmarkId={selectedLandmarkId}
+          onSelectLandmarkId={handleSelectLandmarkById}
+          isMinimized={isFeedMinimized}
+          onToggleMinimize={() => setIsFeedMinimized(prev => !prev)}
+          onOpenSatelliteModal={() => setIsSatelliteModalOpen(true)}
+          sunPosition={sunPosition}
+        />
+      )}
 
       {/* 6. Full-Featured Satellite Imagery & Meteorological Radar Modal */}
-      <SatelliteMetViewerModal
-        isOpen={isSatelliteModalOpen}
-        onClose={() => setIsSatelliteModalOpen(false)}
-        weatherPayload={weatherPayload}
-        weatherTexture={activeWeatherTexture}
-        onFlyToLandmark={handleSelectLandmark}
-        activeSatelliteDate={effectiveSatelliteDate}
-        onSelectSatelliteDate={handleSelectSatelliteDate}
-        activeSatelliteMode={satelliteMode}
-        onChangeSatelliteMode={handleChangeSatelliteMode}
-        activeSensor={selectedSensor}
-        onSelectSensor={setSelectedSensor}
-      />
+      {!hideAll && (
+        <SatelliteMetViewerModal
+          isOpen={isSatelliteModalOpen}
+          onClose={() => setIsSatelliteModalOpen(false)}
+          weatherPayload={weatherPayload}
+          weatherTexture={activeWeatherTexture}
+          onFlyToLandmark={handleSelectLandmark}
+          activeSatelliteDate={effectiveSatelliteDate}
+          onSelectSatelliteDate={handleSelectSatelliteDate}
+          activeSatelliteMode={satelliteMode}
+          onChangeSatelliteMode={handleChangeSatelliteMode}
+          activeSensor={selectedSensor}
+          onSelectSensor={setSelectedSensor}
+        />
+      )}
     </div>
   );
 }

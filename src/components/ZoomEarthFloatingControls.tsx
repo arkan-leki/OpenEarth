@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Cloud, CloudRain, MapPin, RotateCw, Compass, Sliders, X, Layers, Sun } from 'lucide-react';
+import { Cloud, CloudRain, MapPin, RotateCw, Compass, Sliders, X, Layers, Sun, Eye, EyeOff } from 'lucide-react';
 import { ShaderParameters } from '../types';
 
 interface ZoomEarthFloatingControlsProps {
@@ -17,6 +17,8 @@ interface ZoomEarthFloatingControlsProps {
   onOpenSatelliteModal?: () => void;
   isDaytimeMode?: boolean;
   onToggleDaytimeMode?: () => void;
+  hideAll?: boolean;
+  onToggleHideAll?: () => void;
 }
 
 export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps> = ({
@@ -33,7 +35,9 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
   onParamsChange,
   onOpenSatelliteModal,
   isDaytimeMode = false,
-  onToggleDaytimeMode
+  onToggleDaytimeMode,
+  hideAll = false,
+  onToggleHideAll
 }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -50,10 +54,41 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [settingsOpen]);
 
+  // When hideAll is active, only render the floating Eye button to restore everything
+  if (hideAll) {
+    return (
+      <div className="absolute top-4 right-4 z-50 pointer-events-auto">
+        <button
+          id="btn-toggle-hide-all"
+          onClick={onToggleHideAll}
+          className="w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border border-emerald-400/70 bg-slate-950/75 hover:bg-slate-900 text-emerald-300 hover:text-white transition-all shadow-xl hover:scale-105 cursor-pointer"
+          title="Show All UI & Controls"
+        >
+          <EyeOff className="w-5 h-5" />
+        </button>
+      </div>
+    );
+  }
+
   return (
     <>
       {/* Floating Vertical Tool Dock */}
       <div className="absolute top-24 sm:top-24 right-2 sm:right-4 z-30 flex flex-col gap-2 pointer-events-auto">
+        {/* Eye Button: Hide All Things (UI Overlays, Panels, Bars & Pins) */}
+        {onToggleHideAll && (
+          <button
+            id="btn-toggle-hide-all"
+            onClick={() => {
+              setSettingsOpen(false);
+              onToggleHideAll();
+            }}
+            className="w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border border-slate-700/60 bg-slate-950/80 hover:bg-slate-800/90 text-slate-300 hover:text-white transition-all shadow-xl hover:scale-105 cursor-pointer"
+            title="Hide All UI & Markers (Clean 3D View)"
+          >
+            <Eye className="w-5 h-5" />
+          </button>
+        )}
+
         {/* Open 2D Satellite & Met Radar Viewer Modal */}
         {onOpenSatelliteModal && (
           <button

@@ -6,6 +6,7 @@ import type { OrbitControls as OrbitControlsType } from 'three-stdlib';
 import { TerrainChunk } from './TerrainChunk';
 import { VolumetricClouds } from './VolumetricClouds';
 import { HighAltitudeCirrusParticles } from './HighAltitudeCirrusParticles';
+import { CloudShadowDepthProjector } from './CloudShadowDepthProjector';
 import { RainParticles } from './RainParticles';
 import { LandmarkPins, Landmark } from './LandmarkPins';
 import { AtmosphericFogAndDust } from './AtmosphericFogAndDust';
@@ -115,6 +116,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
 }) => {
   const controlsRef = useRef<OrbitControlsType>(null);
   const { camera } = useThree();
+  const [cloudShadowDepthTexture, setCloudShadowDepthTexture] = React.useState<THREE.Texture | null>(null);
 
   // Filter chunks that are currently active in the spatial cache
   const activeChunksToRender = useMemo(() => {
@@ -179,7 +181,18 @@ const SceneContent: React.FC<SceneContentProps> = ({
         color={sunPosition ? sunPosition.ambientColor : '#7dd3fc'}
       />
 
-      {/* 1. SPATIAL CHUNKING: High-Definition Kurdistan Basemap (HD Base) with Ground Snow Cover & Cloud Shadows */}
+      {/* 0. Secondary Offscreen GPU Depth-Buffer & Multi-Octave FBM Cloud Shadow Projector */}
+      {showClouds && (
+        <CloudShadowDepthProjector
+          weatherTexture={weatherTexture}
+          sunPosition={sunPosition}
+          classification={classification}
+          shaderParams={shaderParams}
+          onShadowBufferReady={setCloudShadowDepthTexture}
+        />
+      )}
+
+      {/* 1. SPATIAL CHUNKING: High-Definition Kurdistan Basemap (HD Base) with Ground Snow Cover & FBM Depth-Projected Cloud Shadows */}
       <group>
         {activeChunksToRender.map((chunk) => (
           <TerrainChunk
@@ -192,6 +205,9 @@ const SceneContent: React.FC<SceneContentProps> = ({
             terrainExaggeration={shaderParams.terrainExaggeration ?? 1.25}
             customTexture={groundTexture}
             phenomenaTexture={phenomenaTexture}
+            cloudShadowDepthTexture={showClouds ? cloudShadowDepthTexture : null}
+            cloudBaseY={classification.baseAltitudeM}
+            cloudTopY={classification.topAltitudeM}
             sunPosition={sunPosition}
           />
         ))}

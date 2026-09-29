@@ -276,7 +276,103 @@ export function extractCloudsFromSatelliteImage(
   const avgHumidity = stations.length > 0 ? stations.reduce((acc, s) => acc + (s.humidity ?? 45), 0) / stations.length : 45;
   const maxWindSpeed = stations.length > 0 ? Math.max(...stations.map((s) => s.windSpeed ?? 10)) : 12;
 
-  // Helper to evaluate both Satellite Haze (R) and Puffy Cumulus Core (A) for a pixel against ground reference
+  // ---------------------------------------------------------------------------
+  // STAGE 0: MACRO-BLOCK MASSIVE BRIGHTNESS / WHITE-FILTER DETECTOR (32x32 grid)
+  // Detects satellite swath-edge white filters, overexposed halves, or flat glare
+  // so massive brightness is NEVER mistaken for real clouds!
+  // ---------------------------------------------------------------------------
+  const GRID_N = 32;
+  const blockW = Math.floor(targetWidth / GRID_N);
+  const blockH = Math.floor(targetHeight / GRID_N);
+  const blockBrightFrac = new Float32Array(GRID_N * GRID_N);
+  const blockMeanDiffBlue = new Float32Array(GRID_N * GRID_N);
+  const blockMeanContrast = new Float32Array(GRID_N * GRID_N);
+
+  for (let by = 0; by < GRID_N; by++) {
+    for (let bx = 0; bx < GRID_N; bx++) {
+      let brightCount = 0;
+      let sumDiffBlue = 0;
+      let sumContrast = 0;
+      let count = 0;
+
+      const y0 = by * blockH;
+      const x0 = bx * blockW;
+      for (let py = y0; py < y0 + blockH; py += 2) {
+        for (let px = x0; px < x0 + blockW; px += 2) {
+          const p = py * targetWidth + px;
+          const i = p * 4;
+          const r = src[i];
+          const g = src[i + 1];
+          const b = src[i + 2];
+          const y = 0.299 * r + 0.587 * g + 0.114 * b;
+
+          const bRef = refGround ? refGround.neighborhoodMaxB[p] : 110;
+          const dBlue = b - bRef;
+
+          // Measure local 3x3 luminance contrast to distinguish textured clouds from flat white filter
+          const pRight = py * targetWidth + Math.min(targetWidth - 1, px + 2);
+          const pDown = Math.min(targetHeight - 1, py + 2) * targetWidth + px;
+          const yRight = 0.299 * src[pRight * 4] + 0.587 * src[pRight * 4 + 1] + 0.114 * src[pRight * 4 + 2];
+          const yDown = 0.299 * src[pDown * 4] + 0.587 * src[pDown * 4 + 1] + 0.114 * src[pDown * 4 + 2];
+          const localGrad = Math.abs(y - yRight) + Math.abs(y - yDown);
+
+          if ((y > 148 && r - b < 28 && dBlue > 7) || (r > 232 && g > 232 && b > 232)) {
+            brightCount++;
+          }
+          sumDiffBlue += Math.max(0, dBlue);
+          sumContrast += localGrad;
+          count++;
+        }
+      }
+
+      const bIdx = by * GRID_N + bx;
+      blockBrightFrac[bIdx] = count > 0 ? brightCount / count : 0;
+      blockMeanDiffBlue[bIdx] = count > 0 ? sumDiffBlue / count : 0;
+      blockMeanContrast[bIdx] = count > 0 ? sumContrast / count : 0;
+    }
+  }
+
+  // Compute regional white-filter baseline offset for each macro-block (3x3 block neighborhood)
+  // If a large region/half of the image (> 38% of pixels across multiple blocks) is uniformly bright,
+  // it is a satellite swath white filter / overexposure, NOT a cloud!
+  const blockWhiteFilterOffset = new Float32Array(GRID_N * GRID_N);
+  const blockIsWhiteFilteredSlab = new Uint8Array(GRID_N * GRID_N);
+
+  for (let by = 0; by < GRID_N; by++) {
+    for (let bx = 0; bx < GRID_N; bx++) {
+      let nBright = 0;
+      let nDiffBlue = 0;
+      let nContrast = 0;
+      let nCnt = 0;
+      for (let dy = -2; dy <= 2; dy++) {
+        const nby = Math.min(GRID_N - 1, Math.max(0, by + dy));
+        for (let dx = -2; dx <= 2; dx++) {
+          const nbx = Math.min(GRID_N - 1, Math.max(0, bx + dx));
+          const nbIdx = nby * GRID_N + nbx;
+          nBright += blockBrightFrac[nbIdx];
+          nDiffBlue += blockMeanDiffBlue[nbIdx];
+          nContrast += blockMeanContrast[nbIdx];
+          nCnt++;
+        }
+      }
+      const avgRegionBright = nBright / nCnt;
+      const avgRegionDiffBlue = nDiffBlue / nCnt;
+      const avgRegionContrast = nContrast / nCnt;
+
+      const bIdx = by * GRID_N + bx;
+      // Only flag extreme full-half sensor saturation (> 78% of an entire 5x5 block region uniformly saturated)
+      if (avgRegionBright > 0.78 && avgRegionContrast < 5.0) {
+        blockIsWhiteFilteredSlab[bIdx] = 1;
+        blockWhiteFilterOffset[bIdx] = avgRegionDiffBlue * 0.85 + 10.0;
+      } else {
+        blockWhiteFilterOffset[bIdx] = 0.0;
+      }
+    }
+  }
+
+  // Continuous Physical Cloud Alpha Unmixing against cloudless ground reference:
+  // Recovers smooth, connected, translucent cloud & wave-cloud sheets (matching Zoom Earth)
+  // without punching holes inside smooth cloud interiors or chopping off feathered edges.
   const evaluatePixelCloud = (
     r: number,
     g: number,
@@ -284,56 +380,56 @@ export function extractCloudsFromSatelliteImage(
     yRef: number,
     bRef: number,
     rRefAvg: number,
-    bRefAvg: number
+    bRefAvg: number,
+    localGrad: number,
+    whiteFilterOffset: number,
+    isWhiteFilteredSlab: boolean
   ): [number, number] => {
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
-    const diffLum = y - yRef;
-    const diffBlue = b - bRef;
-    const groundWarmth = rRefAvg - bRefAvg;
-    const pixelWarmth = r - b;
-    const warmthReduction = groundWarmth - pixelWarmth;
 
-    // 1. Bright Puffy Cumulus / Convective Cores (White, optically thick satellite clouds)
-    const isWhiteCloud =
-      pixelWarmth <= 24 &&
-      g - b <= 22 &&
-      b >= 114 &&
-      y >= 122 &&
-      diffBlue >= 8 &&
-      diffLum >= 7;
-
-    // 2. Thin / Translucent Satellite Cloud Haze & Veil over Terrain or Mountains
-    // Captures the soft atmospheric haze and semi-transparent cloud sheets visible in satellite imagery
-    const isSatelliteHaze =
-      pixelWarmth <= 38 &&
-      b >= 98 &&
-      y >= 108 &&
-      diffBlue >= 6 &&
-      diffLum >= 5 &&
-      (warmthReduction >= 5 || pixelWarmth <= 20) &&
-      b - bRefAvg >= (r - rRefAvg) * 0.72;
-
-    if (!isWhiteCloud && !isSatelliteHaze) {
+    // Reject only pure sensor no-data clipping (RGB >= 248 flat)
+    if (r >= 248 && g >= 248 && b >= 248 && localGrad < 1.5) {
       return [0, 0];
     }
 
-    // Haze + Cloud Optical Depth (R channel): captures both soft hazy veils and dense clouds
-    const jumpStrength = Math.min(1.0, Math.max(0.0, (diffBlue - 5.0) / 48.0));
-    const lumStrength = Math.min(1.0, Math.max(0.0, (y - 106.0) / 118.0));
-    const neutrality = Math.min(1.0, Math.max(0.28, 1.0 - Math.max(0, pixelWarmth - 4.0) / 40.0));
-    const totalCloudAndHaze = Math.min(
-      255,
-      Math.round(Math.pow(jumpStrength * 0.55 + lumStrength * 0.45, 0.72) * neutrality * 255)
-    );
-
-    // Puffy Core Strength (A channel): concentrated in the brighter, whiter cumulus nuclei
-    let puffyCore = 0;
-    if (diffBlue >= 9 && y >= 124 && pixelWarmth <= 28) {
-      const coreJump = Math.min(1.0, Math.max(0.0, (diffBlue - 8.0) / 42.0));
-      const coreLum = Math.min(1.0, Math.max(0.0, (y - 120.0) / 105.0));
-      const coreNeutral = Math.min(1.0, Math.max(0.2, 1.0 - Math.max(0, pixelWarmth) / 30.0));
-      puffyCore = Math.min(255, Math.round(Math.pow(coreJump * 0.5 + coreLum * 0.5, 0.80) * coreNeutral * 255));
+    if (isWhiteFilteredSlab && y - yRef < whiteFilterOffset + 14) {
+      return [0, 0];
     }
+
+    const diffLum = (y - yRef) - whiteFilterOffset * 0.5;
+    const diffBlue = (b - bRef) - whiteFilterOffset * 0.5;
+    const diffRed = r - rRefAvg;
+    const groundWarmth = Math.max(8.0, rRefAvg - bRefAvg);
+    const pixelWarmth = Math.max(0.0, r - b);
+
+    // Translucent clouds over warm brown terrain increase Blue and Luminance while reducing ground warmth
+    if (diffBlue < 4.5 || diffLum < 3.5 || b < 94 || y < 104) {
+      return [0, 0];
+    }
+
+    // Reject bare sunlit desert sand where Red increases significantly more than Blue and stays very warm
+    if (pixelWarmth > 42 || (diffRed > diffBlue * 1.25 && pixelWarmth > 24)) {
+      return [0, 0];
+    }
+
+    // Continuous physical alpha unmixing: how far Blue & Luminance moved from bare ground toward cloud white
+    const denomB = Math.max(46.0, 240.0 - bRefAvg);
+    const denomY = Math.max(46.0, 242.0 - yRef);
+    const alphaBlue = Math.min(1.0, Math.max(0.0, (diffBlue - 4.0) / (denomB * 0.72)));
+    const alphaLum  = Math.min(1.0, Math.max(0.0, (diffLum - 3.0) / (denomY * 0.75)));
+
+    // Smoothly attenuate by residual ground warmth without any hard step cutoff
+    const warmthRatio = pixelWarmth / (groundWarmth + 15.0);
+    const warmthFade = Math.min(1.0, Math.max(0.0, 1.20 - warmthRatio * 0.85));
+
+    const rawAlpha = (alphaBlue * 0.60 + alphaLum * 0.40) * warmthFade;
+    if (rawAlpha <= 0.015) {
+      return [0, 0];
+    }
+
+    // Smoothly feathered optical depth (R) + internal wave/billow contrast (A)
+    const totalCloudAndHaze = Math.min(255, Math.round(Math.pow(rawAlpha, 0.88) * 235));
+    const puffyCore = Math.min(255, Math.round(Math.pow(rawAlpha, 1.05) * 240));
 
     return [totalCloudAndHaze, puffyCore];
   };
@@ -366,25 +462,32 @@ export function extractCloudsFromSatelliteImage(
         bRefAvg = refGround.neighborhoodAvgB[p];
       }
 
-      // Evaluate primary satellite pass
-      let [cloudVal, cloudAlbedo] = evaluatePixelCloud(r1, g1, b1, yRef, bRef, rRefAvg, bRefAvg);
+      const bx = Math.min(GRID_N - 1, Math.floor(px / blockW));
+      const by = Math.min(GRID_N - 1, Math.floor(py / blockH));
+      const bIdx = by * GRID_N + bx;
+      const whiteFilterOffset = blockWhiteFilterOffset[bIdx];
+      const isWhiteFilteredSlab = blockIsWhiteFilteredSlab[bIdx] === 1;
 
-      // Also read clouds from secondary same-day NASA sensor pass (e.g. MODIS Aqua + VIIRS)
-      if (secData) {
-        const [c2, a2] = evaluatePixelCloud(
-          secData[i],
-          secData[i + 1],
-          secData[i + 2],
-          yRef,
-          bRef,
-          rRefAvg,
-          bRefAvg
-        );
-        if (c2 > cloudVal) {
-          cloudVal = c2;
-          cloudAlbedo = a2;
-        }
-      }
+      const pRight = py * targetWidth + Math.min(targetWidth - 1, px + 2);
+      const pDown = Math.min(targetHeight - 1, py + 2) * targetWidth + px;
+      const y1 = 0.299 * r1 + 0.587 * g1 + 0.114 * b1;
+      const yR = 0.299 * src[pRight * 4] + 0.587 * src[pRight * 4 + 1] + 0.114 * src[pRight * 4 + 2];
+      const yD = 0.299 * src[pDown * 4] + 0.587 * src[pDown * 4 + 1] + 0.114 * src[pDown * 4 + 2];
+      const localGrad = Math.abs(y1 - yR) + Math.abs(y1 - yD);
+
+      // Evaluate primary verified satellite pass with white-filter protection
+      let [cloudVal, cloudAlbedo] = evaluatePixelCloud(
+        r1,
+        g1,
+        b1,
+        yRef,
+        bRef,
+        rRefAvg,
+        bRefAvg,
+        localGrad,
+        whiteFilterOffset,
+        isWhiteFilteredSlab
+      );
 
       // Precomputed archive mask support
       if (preMaskData && preMaskData[i] > 15 && r1 - b1 <= 24) {
@@ -484,7 +587,41 @@ export function extractCloudsFromSatelliteImage(
   let fallingSnowPixelCount = 0;
   let peakDensity = 0;
 
-  // Despeckle only isolated 1-pixel sensor noise while keeping 100% of crisp satellite cloud structure!
+  // Apply a separable 2-pass radial feathering envelope (radius 4) to R channel so cloud edges
+  // have smooth, gradual atmospheric transitions (zero jagged pixel steps), while keeping wave ripples in A
+  const tempHoriz = new Float32Array(totalPixels);
+  const featheredClouds = new Float32Array(totalPixels);
+  const kernelRadius = 4;
+
+  for (let py = 0; py < targetHeight; py++) {
+    const rowOffset = py * targetWidth;
+    for (let px = 0; px < targetWidth; px++) {
+      let sum = 0;
+      let wSum = 0;
+      for (let dx = -kernelRadius; dx <= kernelRadius; dx++) {
+        const nx = Math.min(targetWidth - 1, Math.max(0, px + dx));
+        const w = kernelRadius + 1 - Math.abs(dx);
+        sum += rawClouds[rowOffset + nx] * w;
+        wSum += w;
+      }
+      tempHoriz[rowOffset + px] = sum / wSum;
+    }
+  }
+
+  for (let py = 0; py < targetHeight; py++) {
+    for (let px = 0; px < targetWidth; px++) {
+      let sum = 0;
+      let wSum = 0;
+      for (let dy = -kernelRadius; dy <= kernelRadius; dy++) {
+        const ny = Math.min(targetHeight - 1, Math.max(0, py + dy));
+        const w = kernelRadius + 1 - Math.abs(dy);
+        sum += tempHoriz[ny * targetWidth + px] * w;
+        wSum += w;
+      }
+      featheredClouds[py * targetWidth + px] = sum / wSum;
+    }
+  }
+
   for (let py = 0; py < targetHeight; py++) {
     const v = py / targetHeight;
     const lat = MAX_LAT - v * (MAX_LAT - MIN_LAT);
@@ -495,38 +632,16 @@ export function extractCloudsFromSatelliteImage(
       const p = py * targetWidth + px;
       const i = p * 4;
 
-      const cCenter = rawClouds[p];
+      const cSmooth = featheredClouds[p];
+      const cRaw = rawClouds[p];
       let finalCloud = 0;
       let finalAlbedo = rawCloudAlbedo[p];
 
-      if (cCenter > 10) {
-        // Compute 5x5 soft satellite haze halo + 3x3 puffy core continuity
-        let activeN = 0;
-        let coreSum = 0;
-        let hazeSum = 0;
-        let hazeWeight = 0;
-        for (let dy = -2; dy <= 2; dy++) {
-          const ny = Math.min(targetHeight - 1, Math.max(0, py + dy));
-          for (let dx = -2; dx <= 2; dx++) {
-            const nx = Math.min(targetWidth - 1, Math.max(0, px + dx));
-            const nv = rawClouds[ny * targetWidth + nx];
-            const na = rawCloudAlbedo[ny * targetWidth + nx];
-            const w = 3 - Math.max(Math.abs(dx), Math.abs(dy));
-            hazeSum += nv * w;
-            hazeWeight += w;
-            if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) {
-              if (nv > 12) activeN++;
-              coreSum += na;
-            }
-          }
-        }
-        if (activeN >= 2) {
-          const haloHaze = hazeSum / hazeWeight;
-          // R channel carries both the cloud and its soft satellite haze aureole
-          finalCloud = Math.min(255, Math.round(Math.max(cCenter * 0.82 + haloHaze * 0.18, haloHaze * 0.72)));
-          // A channel carries the crisp puffy cumulus core strength
-          finalAlbedo = Math.min(255, Math.round(finalAlbedo * 0.75 + (coreSum / 9.0) * 0.25));
-        }
+      if (cSmooth > 3.5 || cRaw > 8) {
+        // Blend 65% smoothly feathered cloud envelope + 35% fine satellite wave texture
+        // so edges fade gradually like Zoom Earth while internal wave ripples remain visible!
+        finalCloud = Math.min(255, Math.round(cSmooth * 0.68 + cRaw * 0.32));
+        finalAlbedo = Math.min(255, Math.round(cSmooth * 0.40 + finalAlbedo * 0.60));
       }
 
       const elevM = sampleRealElevationAtLonLat(lon, lat);
@@ -915,7 +1030,7 @@ export async function loadLiveSatelliteCloudPass(
   sensor = 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
   weatherPayload?: NorthVietnamWeatherPayload | null
 ): Promise<SatelliteCloudAnalysis | null> {
-  const cacheKey = `${sensor}_${date}_1024_v2`;
+  const cacheKey = `${sensor}_${date}_1024_v4_feathered`;
   if (cloudAnalysisCache.has(cacheKey)) {
     return cloudAnalysisCache.get(cacheKey)!;
   }
@@ -923,25 +1038,13 @@ export async function loadLiveSatelliteCloudPass(
   try {
     await loadRealDemData();
 
-    // 1. First resolve the exact NASA pass for the requested date (Today vs Yesterday are guaranteed distinct)
+    // 1. Resolve the verified, non-white-filtered NASA pass for the requested date
     const [satResult, refGround] = await Promise.all([
       loadRobustSatelliteImage(sensor, date),
       loadReferenceGroundData(EXTRACT_RES, EXTRACT_RES)
     ]);
 
     const satImg = satResult.image;
-    const actualPassDate = satResult.actualDate;
-
-    // 2. Load the complementary sensor pass for that EXACT actualPassDate (e.g., 2026-09-26 for Today, 2026-09-25 for Yesterday)
-    let secondaryPassImg: HTMLImageElement | null = null;
-    if (/^\d{4}-\d{2}-\d{2}$/.test(actualPassDate)) {
-      const secondarySensor =
-        sensor === 'MODIS_Aqua_CorrectedReflectance_TrueColor'
-          ? 'VIIRS_SNPP_CorrectedReflectance_TrueColor'
-          : 'MODIS_Aqua_CorrectedReflectance_TrueColor';
-      const secondaryWmsUrl = getNasaGibsWmsUrl(secondarySensor, actualPassDate, 1280, 1024);
-      secondaryPassImg = await loadOptionalImage(secondaryWmsUrl);
-    }
 
     let preMaskImg: HTMLImageElement | null = null;
     const matchHistory = satResult.src.match(/\/tiles\/nasa_history\/(\d{4}-\d{2}-\d{2})\.jpg/);
@@ -957,7 +1060,7 @@ export async function loadLiveSatelliteCloudPass(
       EXTRACT_RES,
       refGround,
       preMaskImg,
-      secondaryPassImg
+      null
     );
 
     const analysis: SatelliteCloudAnalysis = {
