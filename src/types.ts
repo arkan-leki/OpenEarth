@@ -26,6 +26,9 @@ export interface Landmark {
   id: string;
   name: string;
   subLabel?: string;
+  lon?: number;
+  lat?: number;
+  elevationM?: number;
   position: [number, number, number];
   type: 'city' | 'water' | 'mountain' | 'weather' | 'border';
   cameraTarget?: [number, number, number];

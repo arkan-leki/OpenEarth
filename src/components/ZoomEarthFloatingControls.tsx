@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Cloud, CloudRain, MapPin, RotateCw, Compass, Sliders, X, Layers, Sun, Eye, EyeOff } from 'lucide-react';
+import { Cloud, CloudRain, MapPin, RotateCw, Compass, Sliders, X, Layers, Sun, Eye, EyeOff, Trees } from 'lucide-react';
 import { ShaderParameters } from '../types';
 
 interface ZoomEarthFloatingControlsProps {
@@ -9,6 +9,10 @@ interface ZoomEarthFloatingControlsProps {
   onToggleRain: () => void;
   showPins: boolean;
   onTogglePins: () => void;
+  showWorldFeatures?: boolean;
+  onToggleWorldFeatures?: () => void;
+  is360GroundMode?: boolean;
+  onToggle360GroundMode?: () => void;
   autoRotate: boolean;
   onToggleAutoRotate: () => void;
   onResetCamera: () => void;
@@ -28,6 +32,10 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
   onToggleRain,
   showPins,
   onTogglePins,
+  showWorldFeatures = true,
+  onToggleWorldFeatures,
+  is360GroundMode = false,
+  onToggle360GroundMode,
   autoRotate,
   onToggleAutoRotate,
   onResetCamera,
@@ -150,7 +158,7 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
         {/* Toggle Landmarks */}
         <button
           onClick={onTogglePins}
-          className={`w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border transition-all shadow-xl ${
+          className={`w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border transition-all shadow-xl cursor-pointer ${
             showPins
               ? 'bg-emerald-500/25 border-emerald-400 text-emerald-300'
               : 'bg-slate-950/80 border-slate-700/60 text-slate-400 hover:text-white'
@@ -159,6 +167,36 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
         >
           <MapPin className="w-5 h-5" />
         </button>
+
+        {/* Toggle 3D Water, Trees & Cities */}
+        {onToggleWorldFeatures && (
+          <button
+            onClick={onToggleWorldFeatures}
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border transition-all shadow-xl cursor-pointer ${
+              showWorldFeatures
+                ? 'bg-teal-500/25 border-teal-400 text-teal-300'
+                : 'bg-slate-950/80 border-slate-700/60 text-slate-400 hover:text-white'
+            }`}
+            title="Toggle 3D Water (Lakes & Rivers), Trees & Cities"
+          >
+            <Trees className="w-5 h-5" />
+          </button>
+        )}
+
+        {/* Toggle 360° Ground-Level Same-Spot View */}
+        {onToggle360GroundMode && (
+          <button
+            onClick={onToggle360GroundMode}
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border transition-all shadow-xl font-mono text-[11px] font-black cursor-pointer ${
+              is360GroundMode
+                ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow-emerald-500/30'
+                : 'bg-slate-950/80 border-slate-700/60 text-emerald-300 hover:text-white'
+            }`}
+            title="Toggle 360° Ground-Level Same-Spot Panorama View"
+          >
+            360°
+          </button>
+        )}
 
         {/* Toggle Cinematic Orbit */}
         <button

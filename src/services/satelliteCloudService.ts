@@ -376,65 +376,84 @@ export function extractCloudsFromSatelliteImage(
   }
 
   // Continuous Physical Cloud Alpha Unmixing against cloudless ground reference:
-  // Recovers smooth, connected, translucent cloud & wave-cloud sheets (matching Zoom Earth)
-  // without punching holes inside smooth cloud interiors or chopping off feathered edges.
+  // Captures ALL satellite cloud regimes:
+  // 1. Huge high-level semi-transparent cloud networks (Cirrus, Cirrostratus, Altostratus webs)
+  // 2. Small spread-out cumulus / altocumulus puffs across valleys, ridges, and plains
+  // 3. Large thick cumulus, wave clouds, and cumulonimbus formations
   const evaluatePixelCloud = (
     r: number,
     g: number,
     b: number,
-    yRef: number,
-    bRef: number,
+    yRefMax: number,
+    bRefMax: number,
     rRefAvg: number,
+    gRefAvg: number,
     bRefAvg: number,
     localGrad: number,
     whiteFilterOffset: number,
     isWhiteFilteredSlab: boolean
   ): [number, number] => {
     const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    const yRefAvg = 0.299 * rRefAvg + 0.587 * gRefAvg + 0.114 * bRefAvg;
 
-    // Reject only pure sensor no-data clipping (RGB >= 248 flat)
-    if (r >= 248 && g >= 248 && b >= 248 && localGrad < 1.5) {
+    // Reject only pure sensor no-data clipping (RGB >= 250 flat)
+    if (r >= 250 && g >= 250 && b >= 250 && localGrad < 1.0) {
       return [0, 0];
     }
 
-    if (isWhiteFilteredSlab && y - yRef < whiteFilterOffset + 14) {
+    if (isWhiteFilteredSlab && y - yRefMax < whiteFilterOffset + 12) {
       return [0, 0];
     }
 
-    const diffLum = (y - yRef) - whiteFilterOffset * 0.5;
-    const diffBlue = (b - bRef) - whiteFilterOffset * 0.5;
-    const diffRed = r - rRefAvg;
-    const groundWarmth = Math.max(8.0, rRefAvg - bRefAvg);
+    // Compare against true ground average so thin high-level networks and small puffs are never lost
+    const diffLum = (y - yRefAvg) - whiteFilterOffset * 0.4;
+    const diffBlue = (b - bRefAvg) - whiteFilterOffset * 0.4;
+    const diffRed = (r - rRefAvg) - whiteFilterOffset * 0.4;
+
+    const groundWarmth = Math.max(4.0, rRefAvg - bRefAvg);
     const pixelWarmth = Math.max(0.0, r - b);
+    // Clouds are neutral white, so even thin high-level cirrus webs reduce the warm ground's (R - B) gap
+    const warmthReduction = Math.max(0.0, groundWarmth - pixelWarmth);
 
-    // Translucent clouds over warm brown terrain increase Blue and Luminance while reducing ground warmth
-    if (diffBlue < 4.5 || diffLum < 3.5 || b < 94 || y < 104) {
+    // Reject only pixels that are darker/less blue than bare ground
+    if (diffBlue < 1.8 && diffLum < 2.0 && warmthReduction < 2.2) {
       return [0, 0];
     }
 
-    // Reject bare sunlit desert sand where Red increases significantly more than Blue and stays very warm
-    if (pixelWarmth > 42 || (diffRed > diffBlue * 1.25 && pixelWarmth > 24)) {
+    // Reject bare sunlit soil/sand where Red increased much faster than Blue (pixel became warmer than bare ground)
+    if (pixelWarmth > groundWarmth + 8.0 && diffRed > diffBlue * 1.25) {
+      return [0, 0];
+    }
+    if (diffRed > diffBlue * 1.45 && pixelWarmth > 28 && diffBlue < 14) {
       return [0, 0];
     }
 
-    // Continuous physical alpha unmixing: how far Blue & Luminance moved from bare ground toward cloud white
-    const denomB = Math.max(46.0, 240.0 - bRefAvg);
-    const denomY = Math.max(46.0, 242.0 - yRef);
-    const alphaBlue = Math.min(1.0, Math.max(0.0, (diffBlue - 4.0) / (denomB * 0.72)));
-    const alphaLum  = Math.min(1.0, Math.max(0.0, (diffLum - 3.0) / (denomY * 0.75)));
+    // Continuous physical alpha unmixing:
+    // Combines Blue excess, Luminance excess, and Warmth whitening so thin high-level networks,
+    // small scattered puffs over dark mountains/valleys, and thick clouds are all captured!
+    const denomB = Math.max(36.0, 235.0 - bRefAvg);
+    const denomY = Math.max(36.0, 238.0 - yRefAvg);
+    const alphaBlue = Math.min(1.0, Math.max(0.0, (diffBlue - 1.2) / (denomB * 0.62)));
+    const alphaLum  = Math.min(1.0, Math.max(0.0, (diffLum - 1.2) / (denomY * 0.65)));
+    const alphaCool = Math.min(1.0, Math.max(0.0, (warmthReduction - 1.5) / Math.max(14.0, groundWarmth * 0.75)));
 
-    // Smoothly attenuate by residual ground warmth without any hard step cutoff
-    const warmthRatio = pixelWarmth / (groundWarmth + 15.0);
-    const warmthFade = Math.min(1.0, Math.max(0.0, 1.20 - warmthRatio * 0.85));
+    // Gently attenuate only if pixel remains nearly as warm as bare desert sand
+    const warmthRatio = pixelWarmth / (groundWarmth + 18.0);
+    const warmthFade = Math.min(1.0, Math.max(0.18, 1.28 - warmthRatio * 0.72));
 
-    const rawAlpha = (alphaBlue * 0.60 + alphaLum * 0.40) * warmthFade;
-    if (rawAlpha <= 0.015) {
+    const rawAlpha = Math.max(
+      alphaBlue * 0.55 + alphaLum * 0.30 + alphaCool * 0.15,
+      Math.min(alphaBlue, alphaCool) * 0.90
+    ) * warmthFade;
+
+    if (rawAlpha <= 0.008) {
       return [0, 0];
     }
 
-    // Smoothly feathered optical depth (R) + internal wave/billow contrast (A)
-    const totalCloudAndHaze = Math.min(255, Math.round(Math.pow(rawAlpha, 0.88) * 235));
-    const puffyCore = Math.min(255, Math.round(Math.pow(rawAlpha, 1.05) * 240));
+    // R channel: High-level cloud networks + soft haze + full cloud coverage (boosts thin/small clouds)
+    const totalCloudAndHaze = Math.min(255, Math.round(Math.pow(rawAlpha, 0.72) * 248));
+    // A channel: Crisp small & large cumulus/wave cores
+    const puffyCore = Math.min(255, Math.round(Math.pow(rawAlpha, 0.86) * 252));
 
     return [totalCloudAndHaze, puffyCore];
   };
@@ -488,6 +507,7 @@ export function extractCloudsFromSatelliteImage(
         yRef,
         bRef,
         rRefAvg,
+        gRefAvg,
         bRefAvg,
         localGrad,
         whiteFilterOffset,
@@ -674,11 +694,17 @@ export function extractCloudsFromSatelliteImage(
       let finalCloud = 0;
       let finalAlbedo = rawCloudAlbedo[p];
 
-      if (cSmooth > 3.5 || cRaw > 8) {
-        // Blend 65% smoothly feathered cloud envelope + 35% fine satellite wave texture
-        // so edges fade gradually like Zoom Earth while internal wave ripples remain visible!
-        finalCloud = Math.min(255, Math.round(cSmooth * 0.68 + cRaw * 0.32));
-        finalAlbedo = Math.min(255, Math.round(cSmooth * 0.40 + finalAlbedo * 0.60));
+      if (cSmooth > 1.5 || cRaw > 3) {
+        // Preserve 90% of cRaw peak so small spread-out clouds (1-4 px) and thin high-level
+        // cloud networks are never diluted by the 9x9 smoothing kernel, while still keeping soft edges!
+        finalCloud = Math.min(
+          255,
+          Math.round(Math.max(cRaw * 0.90, cSmooth * 0.65 + cRaw * 0.35))
+        );
+        finalAlbedo = Math.min(
+          255,
+          Math.round(Math.max(finalAlbedo * 0.92, cSmooth * 0.40 + finalAlbedo * 0.60))
+        );
       }
 
       const elevM = sampleRealElevationAtLonLat(lon, lat);
@@ -1074,7 +1100,7 @@ export async function loadLiveSatelliteCloudPass(
   sensor = 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
   weatherPayload?: NorthVietnamWeatherPayload | null
 ): Promise<SatelliteCloudAnalysis | null> {
-  const cacheKey = `${sensor}_${date}_1024_v6_real_radar_only`;
+  const cacheKey = `${sensor}_${date}_1024_v7_all_clouds`;
   if (cloudAnalysisCache.has(cacheKey)) {
     return cloudAnalysisCache.get(cacheKey)!;
   }

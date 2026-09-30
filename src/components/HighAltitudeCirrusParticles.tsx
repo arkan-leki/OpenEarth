@@ -49,19 +49,21 @@ export const HighAltitudeCirrusParticles: React.FC<HighAltitudeCirrusParticlesPr
     const w = dataTex?.image?.width || 0;
     const h = dataTex?.image?.height || 0;
 
-    const cloudCells: Array<{ u: number; v: number; strength: number }> = [];
+    const cloudCells: Array<{ u: number; v: number; strength: number; isHighNet: boolean }> = [];
     if (raw && w > 0 && h > 0) {
-      const step = Math.max(2, Math.floor(w / 128));
+      const step = Math.max(2, Math.floor(w / 160));
       for (let py = 2; py < h - 2; py += step) {
         for (let px = 2; px < w - 2; px += step) {
           const idx = (py * w + px) * 4;
           const cR = raw[idx] / 255.0;
           const cA = raw[idx + 3] / 255.0;
-          if (cR > 0.25 && cA > 0.30) {
+          // Include small spread-out clouds, high-level cloud networks, and cumulus cores
+          if (cR > 0.06 || cA > 0.08) {
             cloudCells.push({
               u: px / w,
               v: py / h,
-              strength: Math.max(cR, cA)
+              strength: Math.max(cR, cA),
+              isHighNet: cR > 0.06 && cA < 0.32
             });
           }
         }
@@ -79,22 +81,25 @@ export const HighAltitudeCirrusParticles: React.FC<HighAltitudeCirrusParticlesPr
       count = Math.min(MAX_CUMULUS_PUFFS, cloudCells.length * 2);
       for (let i = 0; i < count; i++) {
         const cell = cloudCells[(i * 7) % cloudCells.length];
-        const jitterX = (nextRand() - 0.5) * 2600;
-        const jitterZ = (nextRand() - 0.5) * 2600;
-        const hNorm = nextRand();
+        const jitterX = (nextRand() - 0.5) * 2200;
+        const jitterZ = (nextRand() - 0.5) * 2200;
+        const hNorm = cell.isHighNet ? 0.65 + nextRand() * 0.30 : nextRand() * 0.75;
 
         const worldX = cell.u * 240000 - 120000 + jitterX;
         const worldZ = cell.v * 160000 - 80000 + jitterZ;
-        // Relative vertical offset above cloudBaseY (200m to 1,250m above base)
-        const relY = 200 + hNorm * (650 + cell.strength * 450);
+        // High-level cloud networks sit in the upper deck (1,100m - 1,750m above base);
+        // small & large cumulus sit in the lower/mid deck (180m - 1,200m above base)
+        const relY = cell.isHighNet
+          ? 1100 + nextRand() * 650
+          : 180 + hNorm * (650 + cell.strength * 450);
 
         origins[i * 3] = worldX;
         origins[i * 3 + 1] = relY;
         origins[i * 3 + 2] = worldZ;
 
-        const size = 3800 + nextRand() * 4200;
-        scales[i * 2] = size * 1.2;
-        scales[i * 2 + 1] = size * 0.82;
+        const size = cell.isHighNet ? 5200 + nextRand() * 5500 : 3200 + nextRand() * 3800;
+        scales[i * 2] = size * (cell.isHighNet ? 1.55 : 1.15);
+        scales[i * 2 + 1] = size * 0.85;
 
         seeds[i] = nextRand();
         heightNorms[i] = hNorm;

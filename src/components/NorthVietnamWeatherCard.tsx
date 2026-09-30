@@ -137,9 +137,9 @@ export const NorthVietnamWeatherCard: React.FC<NorthVietnamWeatherCardProps> = (
           </div>
         </div>
 
-        {/* Key Quick Landmark Jump Pills */}
+        {/* Key Quick Landmark Jump Pills (All 28 360° Ground Locations) */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-2 scrollbar-none">
-          {KURDISTAN_LANDMARKS.slice(0, 7).map((lm) => {
+          {KURDISTAN_LANDMARKS.map((lm) => {
             const isSelected = selectedLandmarkId === lm.id;
             return (
               <button
@@ -151,8 +151,9 @@ export const NorthVietnamWeatherCard: React.FC<NorthVietnamWeatherCardProps> = (
                     ? 'bg-cyan-500 text-slate-950 font-bold shadow-md shadow-cyan-500/20'
                     : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border border-slate-700/50'
                 }`}
+                title={`Jump to 360° Ground View at ${lm.name}`}
               >
-                {lm.name.split(' ')[0]}
+                {lm.name.split(' (')[0]}
               </button>
             );
           })}

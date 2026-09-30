@@ -122,9 +122,6 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
   const handleSelect = (lm: Landmark) => {
     onSelectLandmark(lm);
     setDropdownOpen(false);
-    if (lm.cameraPosition && lm.cameraTarget) {
-      onFlyTo({ pos: lm.cameraPosition, target: lm.cameraTarget });
-    }
   };
 
   const formattedKurdistanDate = liveDate.toLocaleDateString('en-US', {

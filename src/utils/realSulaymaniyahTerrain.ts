@@ -284,130 +284,88 @@ export function buildRealChunkGeometry(
   return geom;
 }
 
-// Compute world positions for major Northern Iraq & Kurdistan landmarks
-const [ex, ez] = geoToWorld(44.0092, 36.1911); // Erbil Citadel
-const [sx, sz] = geoToWorld(45.4351, 35.5558); // Sulaymaniyah City
-const [hx, hz] = geoToWorld(44.8500, 36.7350); // Mount Halgurd
-const [dx, dz] = geoToWorld(42.9885, 36.8679); // Duhok Valley
-const [lkx, lkz] = geoToWorld(44.9610, 35.9520); // Lake Dukan
-const [ax, az] = geoToWorld(43.4875, 37.0911); // Amadiya Citadel Mesa
-const [hlx, hlz] = geoToWorld(45.9861, 35.1778); // Halabja & Hawraman
-const [kx, kz] = geoToWorld(45.3183, 34.6247); // Kalar & Garmian
-const [px, pz] = geoToWorld(45.2400, 35.7500); // Mount Piramagrun
-const [zx, zz] = geoToWorld(42.6869, 37.1436); // Zakho & Delal Bridge
-const [dbx, dbz] = geoToWorld(45.7050, 35.1120); // Lake Darbandikhan
-const [rx, rz] = geoToWorld(44.5400, 36.6500); // Rawanduz & Mount Korek
+// Compute world positions for 28 major Northern Iraq & Kurdistan landmarks
+function makeLandmark(
+  id: string,
+  name: string,
+  subLabel: string,
+  lon: number,
+  lat: number,
+  nominalElevM: number,
+  type: Landmark['type']
+): Landmark {
+  const [wx, wz] = geoToWorld(lon, lat);
+  const demElev = Math.max(nominalElevM * 0.85, getAnalyticalKurdistanElevation(wx, wz));
+  const groundY = demElev * 1.35;
+  return {
+    id,
+    name,
+    subLabel,
+    lon,
+    lat,
+    elevationM: nominalElevM,
+    position: [wx, groundY + 120, wz],
+    type,
+    // Ground-level 360° vantage point right on the same spot
+    cameraTarget: [wx, groundY + 65, wz],
+    cameraPosition: [wx, groundY + 65.4, wz + 2.0]
+  };
+}
 
 export const KURDISTAN_LANDMARKS: Landmark[] = [
-  {
-    id: 'erbil',
-    name: 'Erbil Citadel (هەولێر)',
-    subLabel: 'Capital of Kurdistan • UNESCO Ancient Citadel • 410 m',
-    position: [ex, 420 * 1.35 + 150, ez],
-    type: 'city',
-    cameraTarget: [ex, 350, ez],
-    cameraPosition: [ex + 14000, 6800, ez + 19000]
-  },
-  {
-    id: 'sulaymaniyah',
-    name: 'Sulaymaniyah (سلێمانی)',
-    subLabel: 'Cultural Capital • Mount Goizha & Azmar • 845 m',
-    position: [sx, 860 * 1.35 + 200, sz],
-    type: 'city',
-    cameraTarget: [sx, 750, sz],
-    cameraPosition: [sx + 15000, 7200, sz + 21000]
-  },
-  {
-    id: 'halgurd',
-    name: 'Mount Halgurd (لووتکەی ھەڵگورد)',
-    subLabel: 'Highest Peak in Kurdistan & Iraq • 3,607 m',
-    position: [hx, 3607 * 1.35, hz],
-    type: 'mountain',
-    cameraTarget: [hx, 3200 * 1.35, hz],
-    cameraPosition: [hx + 12000, 8500, hz + 16000]
-  },
-  {
-    id: 'dukan',
-    name: 'Lake Dukan (دەریاچەی دووکان)',
-    subLabel: 'Largest Mountain Reservoir & Hydro Dam • 516 m',
-    position: [lkx, 520 * 1.35 + 100, lkz],
-    type: 'water',
-    cameraTarget: [lkx, 480, lkz],
-    cameraPosition: [lkx + 13000, 6000, lkz + 17000]
-  },
-  {
-    id: 'duhok',
-    name: 'Duhok Valley (دهۆک)',
-    subLabel: 'Gara Mountain Ridge & Duhok Dam • 565 m',
-    position: [dx, 580 * 1.35 + 150, dz],
-    type: 'city',
-    cameraTarget: [dx, 500, dz],
-    cameraPosition: [dx + 12000, 6500, dz + 16000]
-  },
-  {
-    id: 'amadiya',
-    name: 'Amadiya Citadel (ئامێدی)',
-    subLabel: 'Ancient Rock Mesa Fortress • 1,200 m',
-    position: [ax, 1200 * 1.35 + 150, az],
-    type: 'mountain',
-    cameraTarget: [ax, 1050 * 1.35, az],
-    cameraPosition: [ax + 10000, 6000, az + 14000]
-  },
-  {
-    id: 'halabja',
-    name: 'Halabja & Hawraman (هەڵەبجە)',
-    subLabel: 'Historic City & Terraced Hawraman Range • 720 m',
-    position: [hlx, 740 * 1.35 + 150, hlz],
-    type: 'city',
-    cameraTarget: [hlx, 680, hlz],
-    cameraPosition: [hlx + 12000, 6200, hlz + 16000]
-  },
-  {
-    id: 'kalar',
-    name: 'Kalar & Garmian (کەلار)',
-    subLabel: 'Sirwan River Basin & Historic Sherwana Castle • 219 m',
-    position: [kx, 225 * 1.35 + 100, kz],
-    type: 'city',
-    cameraTarget: [kx, 200, kz],
-    cameraPosition: [kx + 12000, 5500, kz + 16000]
-  },
-  {
-    id: 'piramagrun',
-    name: 'Mount Piramagrun (چیای پیرەمەگروون)',
-    subLabel: 'Zagros Limestone Mountain Wall • 2,611 m',
-    position: [px, 2611 * 1.35, pz],
-    type: 'mountain',
-    cameraTarget: [px, 2200 * 1.35, pz],
-    cameraPosition: [px + 11000, 7500, pz + 15000]
-  },
-  {
-    id: 'zakho',
-    name: 'Zakho & Delal Bridge (زاخۆ)',
-    subLabel: 'Historic Khabur River Crossing • 440 m',
-    position: [zx, 450 * 1.35 + 100, zz],
-    type: 'city',
-    cameraTarget: [zx, 400, zz],
-    cameraPosition: [zx + 11000, 5800, zz + 15000]
-  },
-  {
-    id: 'darbandikhan',
-    name: 'Lake Darbandikhan (دەربەندیخان)',
-    subLabel: 'Mountain Reservoir & Rugged Zagros Gorge • 485 m',
-    position: [dbx, 490 * 1.35 + 100, dbz],
-    type: 'water',
-    cameraTarget: [dbx, 450, dbz],
-    cameraPosition: [dbx + 11000, 5500, dbz + 15000]
-  },
-  {
-    id: 'rawanduz',
-    name: 'Rawanduz & Mount Korek (ڕەواندز)',
-    subLabel: 'Gali Ali Beg Canyon & Alpine Heights • 950 m',
-    position: [rx, 960 * 1.35 + 150, rz],
-    type: 'mountain',
-    cameraTarget: [rx, 850, rz],
-    cameraPosition: [rx + 11000, 6200, rz + 15000]
-  }
+  makeLandmark('erbil', 'Erbil Citadel (هەولێر)', 'Capital of Kurdistan • UNESCO Ancient Citadel • 410 m', 44.0092, 36.1911, 410, 'city'),
+  makeLandmark('sulaymaniyah', 'Sulaymaniyah (سلێمانی)', 'Cultural Capital • Mount Goizha & Azmar • 845 m', 45.4351, 35.5558, 845, 'city'),
+  makeLandmark('duhok', 'Duhok Valley (دهۆک)', 'Gara Mountain Ridge & Duhok Dam • 565 m', 42.9885, 36.8679, 565, 'city'),
+  makeLandmark('halabja', 'Halabja & Hawraman (هەڵەبجە)', 'Historic City & Terraced Hawraman Range • 720 m', 45.9861, 35.1778, 720, 'city'),
+  makeLandmark('zakho', 'Zakho & Delal Bridge (زاخۆ)', 'Ancient Roman-Abbasid Khabur Crossing • 440 m', 42.6869, 37.1436, 440, 'city'),
+  makeLandmark('kirkuk', 'Kirkuk Citadel (کەرکووک)', 'Ancient Citadel & Baba Gurgur Eternal Fire • 350 m', 44.3922, 35.4681, 350, 'city'),
+  makeLandmark('halgurd', 'Mount Halgurd (لووتکەی ھەڵگورد)', 'Highest Peak in Kurdistan & Iraq • 3,607 m', 44.8500, 36.7350, 3607, 'mountain'),
+  makeLandmark('piramagrun', 'Mount Piramagrun (چیای پیرەمەگروون)', 'Massive Zagros Limestone Peak • 2,611 m', 45.2400, 35.7500, 2611, 'mountain'),
+  makeLandmark('korek', 'Mount Korek & Rawanduz (چیای کۆڕەک)', 'Alpine Resort & Deep Rawanduz Gorge • 2,127 m', 44.5400, 36.6500, 2127, 'mountain'),
+  makeLandmark('amadiya', 'Amadiya Citadel (ئامێدی)', 'Ancient Mountain Mesa Fortress • 1,200 m', 43.4875, 37.0911, 1200, 'mountain'),
+  makeLandmark('goizha', 'Mount Goizha Overlook (چیای گۆیژە)', 'Panoramic Ridge Above Sulaymaniyah • 1,525 m', 45.4820, 35.5880, 1525, 'mountain'),
+  makeLandmark('safin', 'Mount Safin & Shaqlawa (چیای سەفین)', 'Orchard Valley & High Limestone Crest • 1,950 m', 44.3250, 36.3950, 1950, 'mountain'),
+  makeLandmark('gara', 'Mount Gara Summit (چیای گارە)', 'Northern Zagros Panorama Above Sarsing • 2,151 m', 43.4100, 37.0150, 2151, 'mountain'),
+  makeLandmark('qandil', 'Qandil Alpine Range (چیاکانی قەندیل)', 'High Rugged Border Glaciers & Crags • 3,450 m', 45.0500, 36.5200, 3450, 'mountain'),
+  makeLandmark('shirin', 'Mount Shirin & Barzan (چیای شیرین)', 'Great Zab Canyon & Barzan Wildlife Reserve • 2,050 m', 44.0800, 36.9200, 2050, 'mountain'),
+  makeLandmark('shanidar', 'Shanidar Cave & Bradost (ئەشکەوتی شانەدەر)', 'Neanderthal Archaeological Gorge & Greater Zab • 765 m', 44.2200, 36.8050, 765, 'mountain'),
+  makeLandmark('dukan', 'Lake Dukan (دەریاچەی دووکان)', 'Largest Mountain Reservoir & Hydro Dam • 516 m', 44.9610, 35.9520, 516, 'water'),
+  makeLandmark('darbandikhan', 'Lake Darbandikhan (دەریاچەی دەربەندیخان)', 'Emerald Gorge Reservoir & Sirwan River • 485 m', 45.7050, 35.1120, 485, 'water'),
+  makeLandmark('galialibeg', 'Gali Ali Beg Waterfall (گەلی عەلی بەگ)', 'Deep Limestone Canyon & Mountain Cascade • 820 m', 44.4450, 36.6310, 820, 'water'),
+  makeLandmark('mosuldam', 'Mosul Dam & Tigris Lake (بەنداوی مووسڵ)', 'Upper Tigris Reservoir & Duhok Western Basin • 330 m', 42.8230, 36.6300, 330, 'water'),
+  makeLandmark('akre', 'Akre Historic Town (ئاکرێ)', 'Terraced Mountain Amphitheater & Newroz Capital • 760 m', 43.8930, 36.7410, 760, 'city'),
+  makeLandmark('soran', 'Soran & Diana Plain (سۆران)', 'Heart of Balakayati & Rawanduz Basin • 680 m', 44.5420, 36.6540, 680, 'city'),
+  makeLandmark('ranya', 'Ranya & Bitwen Plain (ڕانیە)', 'Garden Gate of Raparin & Lake Dukan North Shore • 580 m', 44.8820, 36.2550, 580, 'city'),
+  makeLandmark('koya', 'Koya / Koy Sanjaq (کۆیە)', 'Historic Caravanserai & Haibat Sultan Ridge • 620 m', 44.6280, 36.0820, 620, 'city'),
+  makeLandmark('chamchamal', 'Chamchamal & Bazian Pass (چەمچەماڵ)', 'Historic Darband-i Bazian Gateway • 710 m', 44.8340, 35.5330, 710, 'city'),
+  makeLandmark('choman', 'Choman & Haji Omran (چۆمان • حاجی ئۆمەران)', 'High Alpine Valley Along Hamilton Road • 1,580 m', 44.8900, 36.6350, 1580, 'border'),
+  makeLandmark('penjwen', 'Penjwen Mountain Pass (پێنجوێن)', 'Cool High-Altitude Eastern Border Valley • 1,310 m', 45.9420, 35.6210, 1310, 'border'),
+  makeLandmark('kalar', 'Kalar & Garmian (کەلار)', 'Sirwan River Basin & Historic Sherwana Castle • 219 m', 45.3183, 34.6247, 219, 'city')
 ];
+
+/**
+ * Computes the exact Ground-Level 360° camera pose at any landmark or (x, z) coordinate
+ * so the camera stands on solid ground and rotates 360° on the exact same spot.
+ */
+export function getGround360CameraPose(
+  worldX: number,
+  worldZ: number,
+  terrainExaggeration = 1.35,
+  eyeHeightAboveGround = 65
+): { pos: [number, number, number]; target: [number, number, number]; groundY: number } {
+  const c = getRealKurdistanElevation(worldX, worldZ);
+  const n = getRealKurdistanElevation(worldX, worldZ - 35);
+  const s = getRealKurdistanElevation(worldX, worldZ + 35);
+  const e = getRealKurdistanElevation(worldX + 35, worldZ);
+  const w = getRealKurdistanElevation(worldX - 35, worldZ);
+  const groundY = Math.max(c, n, s, e, w) * terrainExaggeration;
+  const eyeY = groundY + eyeHeightAboveGround;
+  return {
+    groundY,
+    target: [worldX, eyeY, worldZ],
+    pos: [worldX, eyeY + 0.4, worldZ + 2.0]
+  };
+}
 
 // Backward compatibility alias
 export const SULAYMANIYAH_LANDMARKS = KURDISTAN_LANDMARKS;

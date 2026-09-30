@@ -6,6 +6,7 @@ import { NorthVietnamWeatherCard } from './components/NorthVietnamWeatherCard';
 import { WeatherSimulationView } from './components/WeatherSimulationView';
 import { SatelliteMetViewerModal } from './components/SatelliteMetViewerModal';
 import { HanoiSolarController } from './components/HanoiSolarController';
+import { Ground360ControlBar } from './components/Ground360ControlBar';
 import {
   getNowInHanoi,
   createHanoiDate,
@@ -22,7 +23,8 @@ import {
   NorthVietnamWeatherPayload
 } from './services/weatherService';
 import {
-  KURDISTAN_LANDMARKS
+  KURDISTAN_LANDMARKS,
+  getGround360CameraPose
 } from './utils/realSulaymaniyahTerrain';
 import { CLOUD_PROFILES, computeRealCloudBaseMeters } from './services/cloudClassificationService';
 import { GridChunkData, ShaderParameters, Landmark } from './types';
@@ -226,6 +228,18 @@ export default function App() {
     target: [number, number, number];
   } | null>(null);
 
+  // 360° Ground-Level Spot Camera Mode & Live Compass Heading
+  const [isGround360Mode, setIsGround360Mode] = useState<boolean>(false);
+  const [ground360Spot, setGround360Spot] = useState<{ x: number; z: number } | null>(() => {
+    const def = KURDISTAN_LANDMARKS[0];
+    return { x: def.position[0], z: def.position[2] };
+  });
+  const [compassHeading, setCompassHeading] = useState<number>(0);
+  const [cameraActionTick, setCameraActionTick] = useState<{
+    type: 'left' | 'right' | 'look_up' | 'horizon';
+    seq: number;
+  } | null>(null);
+
   // Fetch real-time North Vietnam meteorological telemetry from Open-Meteo
   const loadLiveWeather = useCallback(async () => {
     setIsWeatherLoading(true);
@@ -339,15 +353,20 @@ export default function App() {
     setTargetCameraPose(target);
   }, []);
 
+  // Selecting any location places the camera on solid ground at that exact spot in 360° Ground Mode
   const handleSelectLandmark = useCallback((landmark: Landmark) => {
     setSelectedLandmarkId(landmark.id);
-    if (landmark.cameraPosition && landmark.cameraTarget) {
-      setTargetCameraPose({
-        pos: landmark.cameraPosition,
-        target: landmark.cameraTarget
-      });
-    }
-  }, []);
+    const wx = landmark.position[0];
+    const wz = landmark.position[2];
+    const exag = shaderParams.terrainExaggeration ?? 1.35;
+    const pose = getGround360CameraPose(wx, wz, exag, 65);
+    setIsGround360Mode(true);
+    setGround360Spot({ x: wx, z: wz });
+    setTargetCameraPose({
+      pos: pose.pos,
+      target: pose.target
+    });
+  }, [shaderParams.terrainExaggeration]);
 
   const handleSelectLandmarkById = useCallback((id: string) => {
     const lm = KURDISTAN_LANDMARKS.find(l => l.id === id);
@@ -356,18 +375,72 @@ export default function App() {
     }
   }, [handleSelectLandmark]);
 
+  const handleSpotGroundClick = useCallback((x: number, z: number) => {
+    const exag = shaderParams.terrainExaggeration ?? 1.35;
+    const pose = getGround360CameraPose(x, z, exag, 65);
+    setIsGround360Mode(true);
+    setGround360Spot({ x, z });
+    setTargetCameraPose({
+      pos: pose.pos,
+      target: pose.target
+    });
+  }, [shaderParams.terrainExaggeration]);
+
   const handleResetCamera = useCallback(() => {
+    setIsGround360Mode(false);
     setTargetCameraPose({
       pos: [0, 75000, 95000],
       target: [0, 1000, -5000]
     });
   }, []);
 
-  // Station corresponding to the selected landmark
+  const handleToggleGround360Mode = useCallback(() => {
+    if (isGround360Mode) {
+      handleResetCamera();
+    } else {
+      const lm = KURDISTAN_LANDMARKS.find(l => l.id === selectedLandmarkId) || KURDISTAN_LANDMARKS[0];
+      handleSelectLandmark(lm);
+    }
+  }, [isGround360Mode, selectedLandmarkId, handleResetCamera, handleSelectLandmark]);
+
+  const handleCameraAction = useCallback((type: 'left' | 'right' | 'look_up' | 'horizon') => {
+    setCameraActionTick(prev => ({ type, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+
+  // Station corresponding to the selected landmark (supports all 28 locations with elevation lapse-rate calibration)
   const currentStation = useMemo(() => {
-    if (!weatherPayload?.stations) return FALLBACK_WEATHER_DATA.stations[0];
-    const match = weatherPayload.stations.find(s => s.id === selectedLandmarkId);
-    return match || weatherPayload.stations[0];
+    const stations = weatherPayload?.stations?.length ? weatherPayload.stations : FALLBACK_WEATHER_DATA.stations;
+    const exactMatch = stations.find(s => s.id === selectedLandmarkId);
+    if (exactMatch) return exactMatch;
+
+    const lm = KURDISTAN_LANDMARKS.find(l => l.id === selectedLandmarkId);
+    if (!lm) return stations[0];
+
+    const lmLon = lm.lon ?? 44.5;
+    const lmLat = lm.lat ?? 36.2;
+    const lmElev = lm.elevationM ?? 800;
+
+    let nearest = stations[0];
+    let minDist = Infinity;
+    for (const s of stations) {
+      const d = Math.hypot(s.lon - lmLon, s.lat - lmLat);
+      if (d < minDist) {
+        minDist = d;
+        nearest = s;
+      }
+    }
+
+    const elevDelta = lmElev - nearest.elevation;
+    const adjustedTemp = Number((nearest.temperature - elevDelta * 0.0062).toFixed(1));
+    return {
+      ...nearest,
+      id: lm.id,
+      name: lm.name,
+      lat: lmLat,
+      lon: lmLon,
+      elevation: lmElev,
+      temperature: adjustedTemp
+    };
   }, [weatherPayload, selectedLandmarkId]);
 
   // Regional maximum precipitation in mm/h from real meteorological observations
@@ -425,6 +498,11 @@ export default function App() {
         targetCameraPose={targetCameraPose}
         onClearTargetPose={() => setTargetCameraPose(null)}
         onUpdateFps={setFps}
+        isGround360Mode={isGround360Mode}
+        ground360Spot={ground360Spot}
+        onSpotGroundClick={handleSpotGroundClick}
+        cameraActionTick={cameraActionTick}
+        onUpdateCompassHeading={setCompassHeading}
       />
 
       {/* 2. Sleek Floating Top Bar: Branding, Live Date, Landmark Selector & Satellite Modal Button */}
@@ -495,6 +573,20 @@ export default function App() {
           onToggleMinimize={() => setIsFeedMinimized(prev => !prev)}
           onOpenSatelliteModal={() => setIsSatelliteModalOpen(true)}
           sunPosition={sunPosition}
+        />
+      )}
+
+      {/* 5b. 360° Ground-Level Location Explorer & Same-Spot Camera Controller (Bottom Center) */}
+      {!hideAll && (
+        <Ground360ControlBar
+          selectedLandmarkId={selectedLandmarkId}
+          onSelectLandmark={handleSelectLandmark}
+          isGround360Mode={isGround360Mode}
+          onToggleGround360Mode={handleToggleGround360Mode}
+          autoRotate={autoRotate}
+          onToggleAutoRotate={() => setAutoRotate(prev => !prev)}
+          compassHeading={compassHeading}
+          onCameraAction={handleCameraAction}
         />
       )}
 

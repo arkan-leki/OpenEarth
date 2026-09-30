@@ -1,7 +1,7 @@
 import React from 'react';
 import { Html } from '@react-three/drei';
 import { Landmark } from '../types';
-import { KURDISTAN_LANDMARKS } from '../utils/realSulaymaniyahTerrain';
+import { KURDISTAN_LANDMARKS, getRealKurdistanElevation } from '../utils/realSulaymaniyahTerrain';
 
 export type { Landmark };
 export const LANDMARKS: Landmark[] = KURDISTAN_LANDMARKS;
@@ -9,17 +9,28 @@ export const LANDMARKS: Landmark[] = KURDISTAN_LANDMARKS;
 interface LandmarkPinsProps {
   onSelectLandmark: (landmark: Landmark) => void;
   visible?: boolean;
+  terrainExaggeration?: number;
+  selectedLandmarkId?: string;
+  isGround360Mode?: boolean;
 }
 
 export const LandmarkPins: React.FC<LandmarkPinsProps> = ({
   onSelectLandmark,
-  visible = true
+  visible = true,
+  terrainExaggeration = 1.35,
+  selectedLandmarkId,
+  isGround360Mode = false
 }) => {
   if (!visible) return null;
 
   return (
     <group>
       {LANDMARKS.map((lm) => {
+        // Hide the pin we are currently standing inside when in 360° Ground Mode so it doesn't block our eyes
+        if (isGround360Mode && selectedLandmarkId === lm.id) {
+          return null;
+        }
+
         const isBorder = lm.type === 'border';
         const isMountain = lm.type === 'mountain';
         const isWater = lm.type === 'water';
@@ -38,23 +49,27 @@ export const LandmarkPins: React.FC<LandmarkPinsProps> = ({
           pinColor = '#f43f5e';
         }
 
+        const wx = lm.position[0];
+        const wz = lm.position[2];
+        const groundY = getRealKurdistanElevation(wx, wz) * terrainExaggeration;
+
         return (
-          <group key={lm.id} position={lm.position}>
+          <group key={lm.id} position={[wx, groundY + 140, wz]}>
             {/* Vertical 3D locator beacon pillar */}
-            <mesh position={[0, -250, 0]}>
-              <cylinderGeometry args={[45, 18, 500, 8]} />
+            <mesh position={[0, -70, 0]}>
+              <cylinderGeometry args={[32, 12, 140, 8]} />
               <meshBasicMaterial color={pinColor} transparent opacity={0.65} />
             </mesh>
 
             {/* Glowing top orb */}
-            <mesh position={[0, 30, 0]}>
-              <sphereGeometry args={[75, 16, 16]} />
+            <mesh position={[0, 15, 0]}>
+              <sphereGeometry args={[55, 16, 16]} />
               <meshBasicMaterial color={pinColor} />
             </mesh>
 
             {/* Interactive HTML Billboard Marker */}
             <Html
-              position={[0, 160, 0]}
+              position={[0, 130, 0]}
               center
               distanceFactor={24000}
               zIndexRange={[100, 0]}
@@ -66,12 +81,16 @@ export const LandmarkPins: React.FC<LandmarkPinsProps> = ({
                   onSelectLandmark(lm);
                 }}
                 className="group flex flex-col items-center cursor-pointer transition-transform hover:scale-110 active:scale-95 focus:outline-none"
+                title={`Enter 360° Ground View at ${lm.name}`}
               >
                 <div
                   className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold tracking-wider shadow-lg border backdrop-blur-sm whitespace-nowrap flex items-center gap-1.5 ${badgeBg}`}
                 >
                   <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                  {lm.name}
+                  <span>{lm.name}</span>
+                  <span className="px-1 py-0.1 rounded bg-black/25 text-[8px] font-extrabold">
+                    360°
+                  </span>
                 </div>
                 {lm.subLabel && (
                   <div className="mt-0.5 px-1.5 py-0.5 bg-slate-900/90 text-slate-300 text-[8px] font-mono rounded border border-slate-700/60 shadow whitespace-nowrap">

@@ -227,7 +227,7 @@ export const ClusteredCumulusBillboardShader = {
       vRainStrength  = w.g * prog;
 
       // Hide billboard immediately if this cell has no satellite cloud
-      if (vCloudStrength < 0.12) {
+      if (vCloudStrength < 0.05) {
         gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         return;
       }
@@ -293,7 +293,7 @@ export const ClusteredCumulusBillboardShader = {
     }
 
     void main() {
-      if (vCloudStrength < 0.12) discard;
+      if (vCloudStrength < 0.05) discard;
 
       vec2 centered = (vUv - 0.5) * 2.0;
       float r2 = dot(centered, centered);

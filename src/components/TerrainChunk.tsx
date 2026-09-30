@@ -246,6 +246,9 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
           metalness={0.06}
           wireframe={wireframe}
           flatShading={false}
+          side={THREE.DoubleSide}
+          transparent={false}
+          depthWrite={true}
           onBeforeCompile={handleBeforeCompile}
         />
       </mesh>
