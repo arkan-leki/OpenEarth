@@ -12,13 +12,15 @@ interface VolumetricCloudsProps {
   params: ShaderParameters;
   classification: CloudClassification;
   sunPosition?: SunPositionResult;
+  globeRefXZ?: [number, number];
 }
 
 export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
   weatherTexture,
   params,
   classification,
-  sunPosition
+  sunPosition,
+  globeRefXZ = [0, 0]
 }) => {
   const meshRef = useRef<THREE.Mesh>(null);
   const shaderMatRef = useRef<THREE.ShaderMaterial>(null);
@@ -27,7 +29,11 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
   const lightningFlash = useRef(0);
 
   const { baseAltitudeM, topAltitudeM, thicknessM } = classification;
-  const boxCenterY = baseAltitudeM + thicknessM / 2;
+  // Expand vertical bounding box downward by 11,500m to enclose clouds that curve down over the 480km x 320km Earth Globe
+  const boxBottomY = baseAltitudeM - 11500;
+  const boxTopY = topAltitudeM + 200;
+  const boxHeight = boxTopY - boxBottomY;
+  const boxCenterY = boxBottomY + boxHeight / 2;
 
   const uniforms = useMemo(() => {
     return {
@@ -38,10 +44,13 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
       uCameraPos: { value: new THREE.Vector3(0, 4000, 20000) },
       uSunDir: { value: new THREE.Vector3(0.55, 0.78, 0.28).normalize() },
       uSunColor: { value: new THREE.Color('#fffbf0') },
-      uSkyColor: { value: new THREE.Color('#384e6b') },
-      uBoxMin: { value: new THREE.Vector3(-120000, baseAltitudeM, -80000) },
-      uBoxMax: { value: new THREE.Vector3(120000, topAltitudeM, 80000) },
-      uSteps: { value: params.raymarchSteps || 64 },
+      uSkyColor: { value: new THREE.Color('#3b82f6') },
+      uBoxMin: { value: new THREE.Vector3(-240000, baseAltitudeM - 11500, -160000) },
+      uBoxMax: { value: new THREE.Vector3(240000, topAltitudeM + 200, 160000) },
+      uCloudBaseY: { value: baseAltitudeM },
+      uCloudTopY: { value: topAltitudeM },
+      uGlobeRefXZ: { value: new THREE.Vector2(globeRefXZ[0], globeRefXZ[1]) },
+      uSteps: { value: params.raymarchSteps || 56 },
       uCloudDensityMultiplier: { value: (params.cloudDensityMultiplier || 1.5) * classification.densityBoost },
       uAbsorption: { value: params.absorptionFactor || 0.55 },
       uSunScatterIntensity: { value: params.sunScatterIntensity || 1.5 },
@@ -57,8 +66,6 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
     };
   }, []);
 
-  // GSAP fluid transition when switching between satellite modes / dates:
-  // Cleans the previous mode's clouds immediately and smoothly fades in the new mode's clouds
   useEffect(() => {
     if (!shaderMatRef.current) return;
     const mat = shaderMatRef.current;
@@ -80,7 +87,6 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
     }
   }, [weatherTexture]);
 
-  // GSAP fluid transition for cloud shader density & morphological parameters
   useEffect(() => {
     if (!shaderMatRef.current) return;
     const mat = shaderMatRef.current;
@@ -128,26 +134,30 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
       ease: 'power2.out',
       overwrite: 'auto'
     });
+    gsap.to(mat.uniforms.uCloudBaseY, {
+      value: baseAltitudeM,
+      duration: 1.35,
+      ease: 'power2.inOut',
+      overwrite: 'auto'
+    });
+    gsap.to(mat.uniforms.uCloudTopY, {
+      value: topAltitudeM,
+      duration: 1.35,
+      ease: 'power2.inOut',
+      overwrite: 'auto'
+    });
     gsap.to(mat.uniforms.uBoxMin.value, {
-      y: baseAltitudeM,
+      y: baseAltitudeM - 11500,
       duration: 1.35,
       ease: 'power2.inOut',
       overwrite: 'auto'
     });
     gsap.to(mat.uniforms.uBoxMax.value, {
-      y: topAltitudeM,
+      y: topAltitudeM + 200,
       duration: 1.35,
       ease: 'power2.inOut',
       overwrite: 'auto'
     });
-    if (meshRef.current) {
-      gsap.to(meshRef.current.position, {
-        y: baseAltitudeM + (topAltitudeM - baseAltitudeM) / 2,
-        duration: 1.35,
-        ease: 'power2.inOut',
-        overwrite: 'auto'
-      });
-    }
   }, [
     params.cloudDensityMultiplier,
     params.absorptionFactor,
@@ -163,9 +173,10 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
     mat.uniforms.uTime.value = state.clock.elapsedTime;
     mat.uniforms.uCameraPos.value.copy(state.camera.position);
     mat.uniforms.uWeatherData.value = weatherTexture;
-    mat.uniforms.uSteps.value = params.raymarchSteps || 64;
+    mat.uniforms.uSteps.value = params.raymarchSteps || 56;
     mat.uniforms.uWindSpeed.value = params.windSpeed || 0.8;
     mat.uniforms.uHasAnvil.value = classification.hasAnvil ? 1.0 : 0.0;
+    mat.uniforms.uGlobeRefXZ.value.set(globeRefXZ[0], globeRefXZ[1]);
 
     if (sunPosition) {
       mat.uniforms.uSunDir.value.copy(sunPosition.sunDirection);
@@ -196,8 +207,8 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
   });
 
   return (
-    <mesh ref={meshRef} position={[0, boxCenterY, 0]}>
-      <boxGeometry args={[240000, thicknessM + 200, 160000]} />
+    <mesh ref={meshRef} position={[0, boxCenterY, 0]} frustumCulled={false}>
+      <boxGeometry args={[480000, boxHeight, 320000]} />
       <shaderMaterial
         ref={shaderMatRef}
         uniforms={uniforms}

@@ -262,40 +262,40 @@ export function getKurdistanSunPosition(date: Date): SunPositionResult {
   ];
 
   // Dynamic Lighting Intensity and Colors
-  let lightColor = '#fff5e6';
-  let lightIntensity = 1.6;
+  let lightColor = '#fff8ee';
+  let lightIntensity = 1.75;
   let ambientColor = '#dbeafe';
-  let ambientIntensity = 0.65;
-  let skyColor = '#0b0e14';
-  let fogColor = '#0f172a';
-  let cloudSunScatter = 1.5;
+  let ambientIntensity = 0.78;
+  let skyColor = '#1e64b4';
+  let fogColor = '#6cb2f7';
+  let cloudSunScatter = 1.6;
 
   if (elev > 45) {
-    // High midday sun over Kurdistan
+    // High midday sun over Kurdistan / East Turkey / East Syria / West Iran: Rich Cerulean Blue Sky
     lightColor = '#ffffff';
-    lightIntensity = 1.85;
-    ambientColor = '#e2e8f0';
-    ambientIntensity = 0.75;
-    skyColor = '#090d16';
-    fogColor = '#0f172a';
-    cloudSunScatter = 1.6;
+    lightIntensity = 1.9;
+    ambientColor = '#e0f2fe';
+    ambientIntensity = 0.85;
+    skyColor = '#1c64b8';
+    fogColor = '#72b6fa';
+    cloudSunScatter = 1.65;
   } else if (elev > 20) {
-    // Standard daylight
-    lightColor = '#fff8ee';
-    lightIntensity = 1.7;
+    // Standard daylight: Crisp Atmospheric Blue Sky
+    lightColor = '#fff9f0';
+    lightIntensity = 1.75;
     ambientColor = '#dbeafe';
-    ambientIntensity = 0.7;
-    skyColor = '#0b1120';
-    fogColor = '#111827';
-    cloudSunScatter = 1.5;
+    ambientIntensity = 0.78;
+    skyColor = '#226cc2';
+    fogColor = '#78b8fa';
+    cloudSunScatter = 1.55;
   } else if (elev > 8) {
-    // Late afternoon
+    // Late afternoon / Morning: Soft Azure Sky
     lightColor = '#ffeed6';
-    lightIntensity = 1.55;
-    ambientColor = '#fed7aa';
-    ambientIntensity = 0.65;
-    skyColor = '#0f172a';
-    fogColor = '#1e1b4b';
+    lightIntensity = 1.6;
+    ambientColor = '#bae6fd';
+    ambientIntensity = 0.72;
+    skyColor = '#2870be';
+    fogColor = '#84bef8';
     cloudSunScatter = 1.8;
   } else if (elev > 0) {
     // Golden Hour: Rich amber sunbeams casting long shadows across Mount Halgurd & Piramagrun

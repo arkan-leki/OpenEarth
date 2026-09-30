@@ -175,10 +175,9 @@ export default function App() {
     return null;
   }, [satelliteMode, activeRadarGroundTexture]);
 
-  // Dynamic Sun Position & Shadow state based on local time in Hanoi
-  // isDaytimeMode: turns off live datetime mode so the user can easily see the terrain at night.
-  // By default off as requested.
-  const [isDaytimeMode, setIsDaytimeMode] = useState<boolean>(false);
+  // Dynamic Sun Position & Shadow state:
+  // Default isDaytimeMode to true so the 3D Rayleigh sky is vibrant blue and terrain/clouds are brightly lit
+  const [isDaytimeMode, setIsDaytimeMode] = useState<boolean>(true);
   const [isLiveTime, setIsLiveTime] = useState<boolean>(true);
   const [hanoiClock, setHanoiClock] = useState<Date>(() => getNowInHanoi());
   const [simulatedMinutes, setSimulatedMinutes] = useState<number>(() => {
@@ -389,8 +388,8 @@ export default function App() {
   const handleResetCamera = useCallback(() => {
     setIsGround360Mode(false);
     setTargetCameraPose({
-      pos: [0, 75000, 95000],
-      target: [0, 1000, -5000]
+      pos: [0, 125000, 175000],
+      target: [0, 500, -8000]
     });
   }, []);
 

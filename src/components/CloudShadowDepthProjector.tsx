@@ -152,10 +152,10 @@ export const CloudShadowDepthProjector: React.FC<CloudShadowDepthProjectorProps>
         }
 
         void main() {
-          // World XZ coordinate at cloud-base reference plane
+          // World XZ coordinate at cloud-base reference plane (480km x 320km globe domain)
           vec2 worldXZ = vec2(
-            vUv.x * 240000.0 - 120000.0,
-            vUv.y * 160000.0 - 80000.0
+            vUv.x * 480000.0 - 240000.0,
+            vUv.y * 320000.0 - 160000.0
           );
 
           vec2 dynamicDrift = uWindDir * (uTime * uWindSpeed * 3.5);
@@ -176,18 +176,18 @@ export const CloudShadowDepthProjector: React.FC<CloudShadowDepthProjectorProps>
             vec2 rayXZ = worldXZ + uSunDir.xz * ((altY - uCloudBaseY) / max(0.22, uSunDir.y));
             vec2 advectedXZ = rayXZ - dynamicDrift;
             vec2 satUv = clamp(vec2(
-              (advectedXZ.x + 120000.0) / 240000.0,
-              (advectedXZ.y + 80000.0) / 160000.0
+              (advectedXZ.x + 240000.0) / 480000.0,
+              (advectedXZ.y + 160000.0) / 320000.0
             ), 0.002, 0.998);
 
             vec4 w = texture2D(uWeatherData, satUv);
             float satHaze = w.r;
             float satCore = max(w.a, satHaze * 0.85);
 
-            if (satHaze > 0.004) {
-              float cloudTop = mix(0.46, 0.94, smoothstep(0.02, 0.75, satCore));
-              float softBase = smoothstep(0.01, 0.16, h);
-              float softTop  = 1.0 - smoothstep(cloudTop - 0.24, cloudTop + 0.04, h);
+            if (satHaze > 0.012) {
+              float cloudTop = mix(0.38, 0.94, smoothstep(0.02, 0.75, satCore));
+              float softBase = smoothstep(0.01, 0.20, h);
+              float softTop  = 1.0 - smoothstep(cloudTop - 0.28, cloudTop + 0.04, h);
               float verticalProfile = softBase * softTop;
 
               if (verticalProfile > 0.001) {
@@ -202,8 +202,12 @@ export const CloudShadowDepthProjector: React.FC<CloudShadowDepthProjectorProps>
                 float waveRipple = 0.5 + 0.5 * sin((rayXZ.x * 0.0022 + rayXZ.y * 0.0009) + fbm5 * 4.2);
                 float fbmSignal = fbm5 * 0.52 + worleyPuff * 0.34 + waveRipple * 0.14;
 
-                float softSatelliteEnvelope = pow(smoothstep(0.004, 0.74, satHaze), 0.88);
-                float fringeFeather = mix(0.66, 1.26, fbmSignal);
+                float softSatelliteEnvelope = pow(smoothstep(0.012, 0.78, satHaze), 1.15);
+                float fringeFeather = mix(
+                  smoothstep(0.28, 0.76, fbmSignal),
+                  mix(0.68, 1.26, fbmSignal),
+                  smoothstep(0.03, 0.32, satHaze)
+                );
 
                 float sliceDensity = softSatelliteEnvelope * fringeFeather * verticalProfile * uCloudDensityMultiplier;
                 totalOpticalDepth += sliceDensity * 0.28;

@@ -20,9 +20,9 @@ import {
 
 export const CHUNK_GRID_COLS = ['A', 'B', 'C', 'D'];
 export const CHUNK_GRID_ROWS = [1, 2, 3, 4];
-export const CHUNK_WIDTH_METERS = 60000;  // 60 km per chunk (Total: 240 km across 4 cols)
-export const CHUNK_HEIGHT_METERS = 40000; // 40 km per chunk (Total: 160 km across 4 rows)
-export const CHUNK_SIZE_METERS = 60000;   // Backward compatibility
+export const CHUNK_WIDTH_METERS = 120000; // 120 km per chunk (Total: 480 km across 4 cols)
+export const CHUNK_HEIGHT_METERS = 80000; // 80 km per chunk (Total: 320 km across 4 rows)
+export const CHUNK_SIZE_METERS = 120000;  // Backward compatibility
 
 export const KURDISTAN_SECTOR_NAMES: Record<string, string> = {
   A1: 'Zakho & Khabur River Valley (Delal Bridge)',

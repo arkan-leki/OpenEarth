@@ -1,37 +1,35 @@
 /**
- * Real Topography & Digital Elevation Model (DEM) for Northern Iraq & Kurdistan Region
- * Covering the entire expanse of Kurdistan Region & Northern Iraq:
- * - Mount Halgurd Peak (highest in Kurdistan & Iraq, 3,607m) & High Zagros Range
- * - Erbil (Hewlêr) City & Historic UNESCO World Heritage Citadel (410m)
- * - Sulaymaniyah (Silêmanî) Cultural Capital & Mount Goizha / Azmar (845m / 1,520m)
- * - Duhok Valley, Gara Mountain Ridge & Duhok Dam (565m)
- * - Lake Dukan (Dokan Reservoir) & Hydroelectric Dam (516m)
- * - Amadiya (Amedi) Ancient Rock Citadel Mesa (1,200m)
- * - Halabja & Terraced Hawraman Mountains (720m)
- * - Mount Piramagrun Limestone Wall (2,611m)
- * - Zakho & Historic Delal Bridge on Khabur River (440m)
- * - Lake Darbandikhan Reservoir & Zagros Gorges (485m)
- * - Rawanduz Canyon, Gali Ali Beg & Mount Korek (950m)
- * - Kalar & Garmian Plain on the Sirwan River (219m)
+ * Real Planetary Globe Topography & Digital Elevation Model (DEM) for:
+ * - Northern Iraq (Southern Kurdistan / Bashur: Erbil, Sulaymaniyah, Duhok, Mosul, Kirkuk, Sinjar, Halabja, Halgurd)
+ * - Eastern Turkey (Northern Kurdistan / Bakur: Diyarbakır, Mardin, Lake Van, Hakkari / Cilo, Şırnak / Cudi, Cizre)
+ * - Eastern Syria (Rojava / Western Kurdistan: Qamishli, Al-Hasakah, Derik, Amuda, Khabur & Jazira Plains)
+ * - Western Iran (Eastern Kurdistan / Rojhelat: Lake Urmia, Mahabad, Sanandaj, Kermanshah, Marivan, Piranshahr, Ilam)
  *
- * Mapped 1:1 with NASA Earthdata Satellite Imagery and 1280x1024 Digital Elevation Model
+ * Mapped across a 480 km x 320 km curved Earth Globe segment where:
+ * - At 50 km distance, Earth's curvature drops by ~454 m (flat land disappears over the horizon)
+ * - At 100 km distance, Earth's curvature drops by ~1,818 m (mountains disappear over the horizon)
  */
 import * as THREE from 'three';
 import { Landmark } from '../types';
 
-export const DOMAIN_WIDTH_METERS = 240000;  // 240 km in world units
-export const DOMAIN_HEIGHT_METERS = 160000; // 160 km in world units
-export const HALF_DOMAIN_WIDTH = DOMAIN_WIDTH_METERS / 2;   // 120000 m
-export const HALF_DOMAIN_HEIGHT = DOMAIN_HEIGHT_METERS / 2; // 80000 m
+export const DOMAIN_WIDTH_METERS = 480000;  // 480 km in world units (East Syria/Turkey to West Iran)
+export const DOMAIN_HEIGHT_METERS = 320000; // 320 km in world units (Lake Van/Diyarbakır to Ilam/Kalar)
+export const HALF_DOMAIN_WIDTH = DOMAIN_WIDTH_METERS / 2;   // 240000 m
+export const HALF_DOMAIN_HEIGHT = DOMAIN_HEIGHT_METERS / 2; // 160000 m
 
 // Backward compatibility aliases
 export const DOMAIN_SIZE_METERS = DOMAIN_WIDTH_METERS;
 export const HALF_DOMAIN = HALF_DOMAIN_WIDTH;
 
+// Spherical Earth Globe curvature divisor:
+// Drop = -d^2 / 5,500,000 -> -454m at 50km (land horizon), -1,818m at 100km (mountain horizon)
+export const EARTH_CURVATURE_DIVISOR = 5500000.0;
+
 export const DEM_WIDTH = 1280;
 export const DEM_HEIGHT = 1024;
 
-// Exact bounding box of the NASA VIIRS / SRTM DEM zoom 8 tiles
+// Exact bounding box of the NASA VIIRS / SRTM DEM zoom 8 tiles covering
+// East Syria (40.78°E), East Turkey (37.72°N), North Iraq, and West Iran (47.81°E)
 export const MIN_LON = 40.78125;
 export const MAX_LON = 47.8125;
 export const MIN_LAT = 33.137551;
@@ -47,7 +45,7 @@ export function loadRealDemData(): Promise<Int16Array | null> {
 
   demLoadPromise = fetch('/data/north_iraq_dem_1280x1024.bin')
     .then((res) => {
-      if (!res.ok) throw new Error('Failed to load North Iraq DEM binary');
+      if (!res.ok) throw new Error('Failed to load regional DEM binary');
       return res.arrayBuffer();
     })
     .then((buf) => {
@@ -55,7 +53,7 @@ export function loadRealDemData(): Promise<Int16Array | null> {
       return cachedDemData;
     })
     .catch((err) => {
-      console.warn('Real North Iraq DEM binary pending, using organic Kurdistan topography calibration:', err.message);
+      console.warn('Regional DEM binary pending, using analytical topography calibration:', err.message);
       return null;
     });
 
@@ -79,57 +77,73 @@ export function geoToWorld(lon: number, lat: number): [number, number] {
 }
 
 /**
- * Analytical real-geography baseline matching Northern Iraq & Kurdistan Region
- * Used seamlessly while binary DEM is loading over network
- * Features broad mountain bases, gentle foothills, and realistic non-needle slopes
+ * Computes the vertical Earth Globe curvature drop (negative meters) at (worldX, worldZ)
+ * relative to the local reference point (refX, refZ):
+ * - At 50 km distance: -454.5 m (plains disappear over the globe horizon)
+ * - At 100 km distance: -1,818.2 m (mountains disappear over the globe horizon)
+ */
+export function getEarthCurvatureDropMeters(
+  worldX: number,
+  worldZ: number,
+  refX = 0,
+  refZ = 0
+): number {
+  const dx = worldX - refX;
+  const dz = worldZ - refZ;
+  return -((dx * dx + dz * dz) / EARTH_CURVATURE_DIVISOR);
+}
+
+/**
+ * Analytical real-geography baseline matching Eastern Turkey, Eastern Syria, Northern Iraq, and Western Iran
+ * Used seamlessly while binary DEM is loading over network.
  */
 function getAnalyticalKurdistanElevation(worldX: number, worldZ: number): number {
-  // Normalize coords: nx in [-1, 1] (West to East), nz in [-1, 1] (North to South)
+  // Normalize coords: nx in [-1, 1] (West: East Syria/Diyarbakır to East: West Iran/Sanandaj), nz in [-1, 1] (North: Lake Van to South: Ilam/Kalar)
   const nx = worldX / HALF_DOMAIN_WIDTH;
   const nz = worldZ / HALF_DOMAIN_HEIGHT;
 
-  // General slope: High alpine Zagros mountains in North-East, fertile plains in South-West
-  let elev = 620 - nz * 380 + nx * 420;
+  // General slope: High alpine Taurus & Zagros mountains in North & East, Jazira/Mesopotamian plains in South-West
+  let elev = 620 - nz * 390 + nx * 440;
 
-  // 1. Mount Halgurd & Northern Zagros range (NE: x ~ 18000, z ~ -45000)
-  const distHalgurd = Math.hypot(worldX - 18000, worldZ - (-45000));
-  if (distHalgurd < 55000) {
-    const dome = Math.cos((distHalgurd / 55000) * (Math.PI / 2));
+  // 1. Mount Halgurd, Hakkari / Cilo & Northern Zagros-Taurus range (x ~ 36000, z ~ -90000)
+  const distHalgurd = Math.hypot(worldX - 36000, worldZ - (-90000));
+  if (distHalgurd < 110000) {
+    const dome = Math.cos((distHalgurd / 110000) * (Math.PI / 2));
     elev += dome * dome * 2750;
   }
 
-  // 2. Sulaymaniyah, Mount Piramagrun & Mount Goizha / Azmar (E: x ~ 38000, z ~ -5000)
-  const distSuli = Math.hypot(worldX - 38000, worldZ - (-5000));
-  if (distSuli < 42000) {
-    const dome = Math.cos((distSuli / 42000) * (Math.PI / 2));
-    elev += dome * dome * 1400;
+  // 2. Sulaymaniyah, Mount Piramagrun, Hawraman & Sanandaj / Kermanshah Zagros Wall (x ~ 95000, z ~ 10000)
+  const distSuli = Math.hypot(worldX - 95000, worldZ - 10000);
+  if (distSuli < 105000) {
+    const dome = Math.cos((distSuli / 105000) * (Math.PI / 2));
+    elev += dome * dome * 1650;
   }
 
-  // 3. Mount Sinjar / Shingal Ridge (W: x ~ -82000, z ~ -30000)
-  const distSinjar = Math.hypot((worldX - (-82000)) * 0.45, worldZ - (-30000));
-  if (distSinjar < 28000) {
-    const dome = Math.cos((distSinjar / 28000) * (Math.PI / 2));
-    elev += dome * dome * 850;
+  // 3. Mount Sinjar / Shingal Ridge near Syria-Iraq border (W: x ~ -164000, z ~ -60000)
+  const distSinjar = Math.hypot((worldX - (-164000)) * 0.45, worldZ - (-60000));
+  if (distSinjar < 56000) {
+    const dome = Math.cos((distSinjar / 56000) * (Math.PI / 2));
+    elev += dome * dome * 880;
   }
 
-  // 4. Northern Turkish border mountains (Amadiya / Hakkari / Gara ridge: z < -38000)
-  if (worldZ < -38000) {
-    const ridgeDist = Math.min(38000, -worldZ - 38000);
-    const ridge = Math.sin((ridgeDist / 38000) * (Math.PI / 2));
-    elev += ridge * 1250;
+  // 4. Eastern Turkey Taurus Mountains (Diyarbakır / Mardin / Şırnak / Hakkari / Van: z < -76000)
+  if (worldZ < -76000) {
+    const ridgeDist = Math.min(76000, -worldZ - 76000);
+    const ridge = Math.sin((ridgeDist / 76000) * (Math.PI / 2));
+    elev += ridge * 1350;
   }
 
-  // 5. Lake Dukan depression (x ~ 26000, z ~ -12000)
-  const distDukan = Math.hypot(worldX - 26000, worldZ - (-12000));
-  if (distDukan < 14000) {
-    const bowl = Math.cos((distDukan / 14000) * (Math.PI / 2));
+  // 5. Lake Dukan depression (x ~ 52000, z ~ -24000)
+  const distDukan = Math.hypot(worldX - 52000, worldZ - (-24000));
+  if (distDukan < 28000) {
+    const bowl = Math.cos((distDukan / 28000) * (Math.PI / 2));
     elev -= bowl * 280;
   }
 
-  // 6. Lake Darbandikhan depression (x ~ 48000, z ~ 18000)
-  const distDarbandikhan = Math.hypot(worldX - 48000, worldZ - 18000);
-  if (distDarbandikhan < 12000) {
-    const bowl = Math.cos((distDarbandikhan / 12000) * (Math.PI / 2));
+  // 6. Lake Darbandikhan depression (x ~ 96000, z ~ 36000)
+  const distDarbandikhan = Math.hypot(worldX - 96000, worldZ - 36000);
+  if (distDarbandikhan < 24000) {
+    const bowl = Math.cos((distDarbandikhan / 24000) * (Math.PI / 2));
     elev -= bowl * 220;
   }
 
@@ -137,8 +151,8 @@ function getAnalyticalKurdistanElevation(worldX: number, worldZ: number): number
 }
 
 /**
- * Returns exact real elevation in meters for any point across Northern Iraq & Kurdistan
- * Uses smooth Hermite C1 filtering to completely eliminate jagged needle spikes and stair-stepping
+ * Returns exact real elevation in meters above sea level (un-curved) for any point
+ * across Eastern Turkey, Eastern Syria, Northern Iraq, and Western Iran.
  */
 export function getRealKurdistanElevation(worldX: number, worldZ: number): number {
   if (cachedDemData) {
@@ -175,7 +189,7 @@ export function getRealKurdistanElevation(worldX: number, worldZ: number): numbe
   return getAnalyticalKurdistanElevation(worldX, worldZ);
 }
 
-// Backward compatibility alias
+// Backward compatibility aliases
 export const getRealSulaymaniyahElevation = getRealKurdistanElevation;
 export const getRealNorthVietnamElevation = getRealKurdistanElevation;
 
@@ -242,13 +256,15 @@ export const getNorthVietnamSatelliteTexture = getKurdistanSatelliteTexture;
 
 /**
  * Builds real chunk geometry using the DEM heightmap and UV offsets for a sub-chunk.
+ * Note: Earth Globe Curvature (-d^2 / 5,500,000) is applied dynamically in the GPU vertex shader
+ * so the globe horizon curves smoothly around the active vantage point.
  */
 export function buildRealChunkGeometry(
   gridX: number,
   gridY: number,
   chunkWidth: number,
   chunkHeight: number,
-  subdivisions: number = 64,
+  subdivisions: number = 72,
   terrainExaggeration: number = 1.35
 ): THREE.PlaneGeometry {
   const geom = new THREE.PlaneGeometry(
@@ -273,7 +289,7 @@ export function buildRealChunkGeometry(
     const elevMeters = getRealKurdistanElevation(worldX, worldZ);
     posAttr.setY(i, elevMeters * terrainExaggeration);
 
-    // Geographic UV: global mapping across the whole 240km x 160km North Iraq Kurdistan domain
+    // Geographic UV: global mapping across the whole 480km x 320km domain
     const globalU = (worldX + HALF_DOMAIN_WIDTH) / DOMAIN_WIDTH_METERS;
     const globalV = 1.0 - (worldZ + HALF_DOMAIN_HEIGHT) / DOMAIN_HEIGHT_METERS;
 
@@ -284,7 +300,7 @@ export function buildRealChunkGeometry(
   return geom;
 }
 
-// Compute world positions for 28 major Northern Iraq & Kurdistan landmarks
+// Compute world positions for 36 major locations across Northern Iraq, Eastern Turkey, Eastern Syria, and Western Iran
 function makeLandmark(
   id: string,
   name: string,
@@ -292,7 +308,8 @@ function makeLandmark(
   lon: number,
   lat: number,
   nominalElevM: number,
-  type: Landmark['type']
+  type: Landmark['type'],
+  region: NonNullable<Landmark['region']>
 ): Landmark {
   const [wx, wz] = geoToWorld(lon, lat);
   const demElev = Math.max(nominalElevM * 0.85, getAnalyticalKurdistanElevation(wx, wz));
@@ -304,6 +321,7 @@ function makeLandmark(
     lon,
     lat,
     elevationM: nominalElevM,
+    region,
     position: [wx, groundY + 120, wz],
     type,
     // Ground-level 360° vantage point right on the same spot
@@ -313,52 +331,71 @@ function makeLandmark(
 }
 
 export const KURDISTAN_LANDMARKS: Landmark[] = [
-  makeLandmark('erbil', 'Erbil Citadel (هەولێر)', 'Capital of Kurdistan • UNESCO Ancient Citadel • 410 m', 44.0092, 36.1911, 410, 'city'),
-  makeLandmark('sulaymaniyah', 'Sulaymaniyah (سلێمانی)', 'Cultural Capital • Mount Goizha & Azmar • 845 m', 45.4351, 35.5558, 845, 'city'),
-  makeLandmark('duhok', 'Duhok Valley (دهۆک)', 'Gara Mountain Ridge & Duhok Dam • 565 m', 42.9885, 36.8679, 565, 'city'),
-  makeLandmark('halabja', 'Halabja & Hawraman (هەڵەبجە)', 'Historic City & Terraced Hawraman Range • 720 m', 45.9861, 35.1778, 720, 'city'),
-  makeLandmark('zakho', 'Zakho & Delal Bridge (زاخۆ)', 'Ancient Roman-Abbasid Khabur Crossing • 440 m', 42.6869, 37.1436, 440, 'city'),
-  makeLandmark('kirkuk', 'Kirkuk Citadel (کەرکووک)', 'Ancient Citadel & Baba Gurgur Eternal Fire • 350 m', 44.3922, 35.4681, 350, 'city'),
-  makeLandmark('halgurd', 'Mount Halgurd (لووتکەی ھەڵگورد)', 'Highest Peak in Kurdistan & Iraq • 3,607 m', 44.8500, 36.7350, 3607, 'mountain'),
-  makeLandmark('piramagrun', 'Mount Piramagrun (چیای پیرەمەگروون)', 'Massive Zagros Limestone Peak • 2,611 m', 45.2400, 35.7500, 2611, 'mountain'),
-  makeLandmark('korek', 'Mount Korek & Rawanduz (چیای کۆڕەک)', 'Alpine Resort & Deep Rawanduz Gorge • 2,127 m', 44.5400, 36.6500, 2127, 'mountain'),
-  makeLandmark('amadiya', 'Amadiya Citadel (ئامێدی)', 'Ancient Mountain Mesa Fortress • 1,200 m', 43.4875, 37.0911, 1200, 'mountain'),
-  makeLandmark('goizha', 'Mount Goizha Overlook (چیای گۆیژە)', 'Panoramic Ridge Above Sulaymaniyah • 1,525 m', 45.4820, 35.5880, 1525, 'mountain'),
-  makeLandmark('safin', 'Mount Safin & Shaqlawa (چیای سەفین)', 'Orchard Valley & High Limestone Crest • 1,950 m', 44.3250, 36.3950, 1950, 'mountain'),
-  makeLandmark('gara', 'Mount Gara Summit (چیای گارە)', 'Northern Zagros Panorama Above Sarsing • 2,151 m', 43.4100, 37.0150, 2151, 'mountain'),
-  makeLandmark('qandil', 'Qandil Alpine Range (چیاکانی قەندیل)', 'High Rugged Border Glaciers & Crags • 3,450 m', 45.0500, 36.5200, 3450, 'mountain'),
-  makeLandmark('shirin', 'Mount Shirin & Barzan (چیای شیرین)', 'Great Zab Canyon & Barzan Wildlife Reserve • 2,050 m', 44.0800, 36.9200, 2050, 'mountain'),
-  makeLandmark('shanidar', 'Shanidar Cave & Bradost (ئەشکەوتی شانەدەر)', 'Neanderthal Archaeological Gorge & Greater Zab • 765 m', 44.2200, 36.8050, 765, 'mountain'),
-  makeLandmark('dukan', 'Lake Dukan (دەریاچەی دووکان)', 'Largest Mountain Reservoir & Hydro Dam • 516 m', 44.9610, 35.9520, 516, 'water'),
-  makeLandmark('darbandikhan', 'Lake Darbandikhan (دەریاچەی دەربەندیخان)', 'Emerald Gorge Reservoir & Sirwan River • 485 m', 45.7050, 35.1120, 485, 'water'),
-  makeLandmark('galialibeg', 'Gali Ali Beg Waterfall (گەلی عەلی بەگ)', 'Deep Limestone Canyon & Mountain Cascade • 820 m', 44.4450, 36.6310, 820, 'water'),
-  makeLandmark('mosuldam', 'Mosul Dam & Tigris Lake (بەنداوی مووسڵ)', 'Upper Tigris Reservoir & Duhok Western Basin • 330 m', 42.8230, 36.6300, 330, 'water'),
-  makeLandmark('akre', 'Akre Historic Town (ئاکرێ)', 'Terraced Mountain Amphitheater & Newroz Capital • 760 m', 43.8930, 36.7410, 760, 'city'),
-  makeLandmark('soran', 'Soran & Diana Plain (سۆران)', 'Heart of Balakayati & Rawanduz Basin • 680 m', 44.5420, 36.6540, 680, 'city'),
-  makeLandmark('ranya', 'Ranya & Bitwen Plain (ڕانیە)', 'Garden Gate of Raparin & Lake Dukan North Shore • 580 m', 44.8820, 36.2550, 580, 'city'),
-  makeLandmark('koya', 'Koya / Koy Sanjaq (کۆیە)', 'Historic Caravanserai & Haibat Sultan Ridge • 620 m', 44.6280, 36.0820, 620, 'city'),
-  makeLandmark('chamchamal', 'Chamchamal & Bazian Pass (چەمچەماڵ)', 'Historic Darband-i Bazian Gateway • 710 m', 44.8340, 35.5330, 710, 'city'),
-  makeLandmark('choman', 'Choman & Haji Omran (چۆمان • حاجی ئۆمەران)', 'High Alpine Valley Along Hamilton Road • 1,580 m', 44.8900, 36.6350, 1580, 'border'),
-  makeLandmark('penjwen', 'Penjwen Mountain Pass (پێنجوێن)', 'Cool High-Altitude Eastern Border Valley • 1,310 m', 45.9420, 35.6210, 1310, 'border'),
-  makeLandmark('kalar', 'Kalar & Garmian (کەلار)', 'Sirwan River Basin & Historic Sherwana Castle • 219 m', 45.3183, 34.6247, 219, 'city')
+  // ================= NORTHERN IRAQ (BASHUR) =================
+  makeLandmark('erbil', 'Erbil Citadel (هەولێر)', 'North Iraq • UNESCO Ancient Citadel • 410 m', 44.0092, 36.1911, 410, 'city', 'north_iraq'),
+  makeLandmark('sulaymaniyah', 'Sulaymaniyah (سلێمانی)', 'North Iraq • Mount Goizha & Azmar • 845 m', 45.4351, 35.5558, 845, 'city', 'north_iraq'),
+  makeLandmark('duhok', 'Duhok Valley (دهۆک)', 'North Iraq • Gara Ridge & Duhok Dam • 565 m', 42.9885, 36.8679, 565, 'city', 'north_iraq'),
+  makeLandmark('mosul', 'Mosul & Nineveh (مووسڵ)', 'North Iraq • Tigris River & Nineveh Plains • 225 m', 43.1300, 36.3400, 225, 'city', 'north_iraq'),
+  makeLandmark('kirkuk', 'Kirkuk Citadel (کەرکووک)', 'North Iraq • Ancient Citadel & Baba Gurgur • 350 m', 44.3922, 35.4681, 350, 'city', 'north_iraq'),
+  makeLandmark('halabja', 'Halabja & Hawraman (هەڵەبجە)', 'North Iraq • Terraced Hawraman Range • 720 m', 45.9861, 35.1778, 720, 'city', 'north_iraq'),
+  makeLandmark('zakho', 'Zakho & Delal Bridge (زاخۆ)', 'North Iraq • Ancient Khabur Crossing • 440 m', 42.6869, 37.1436, 440, 'city', 'north_iraq'),
+  makeLandmark('sinjar', 'Mount Sinjar / Shingal (چیای شنگال)', 'North Iraq • Western Limestone Ridge • 1,463 m', 41.8500, 36.3800, 1463, 'mountain', 'north_iraq'),
+  makeLandmark('halgurd', 'Mount Halgurd (لووتکەی ھەڵگورد)', 'North Iraq • Highest Peak in Iraq • 3,607 m', 44.8500, 36.7350, 3607, 'mountain', 'north_iraq'),
+  makeLandmark('piramagrun', 'Mount Piramagrun (چیای پیرەمەگروون)', 'North Iraq • Zagros Limestone Peak • 2,611 m', 45.2400, 35.7500, 2611, 'mountain', 'north_iraq'),
+  makeLandmark('korek', 'Mount Korek & Rawanduz (چیای کۆڕەک)', 'North Iraq • Deep Rawanduz Gorge • 2,127 m', 44.5400, 36.6500, 2127, 'mountain', 'north_iraq'),
+  makeLandmark('amadiya', 'Amadiya Citadel (ئامێدی)', 'North Iraq • Ancient Mountain Mesa • 1,200 m', 43.4875, 37.0911, 1200, 'mountain', 'north_iraq'),
+  makeLandmark('qandil', 'Qandil Alpine Range (چیاکانی قەندیل)', 'North Iraq / Iran Border Crags • 3,450 m', 45.0500, 36.5200, 3450, 'mountain', 'north_iraq'),
+  makeLandmark('dukan', 'Lake Dukan (دەریاچەی دووکان)', 'North Iraq • Largest Mountain Reservoir • 516 m', 44.9610, 35.9520, 516, 'water', 'north_iraq'),
+  makeLandmark('darbandikhan', 'Lake Darbandikhan (دەریاچەی دەربەندیخان)', 'North Iraq • Emerald Gorge Reservoir • 485 m', 45.7050, 35.1120, 485, 'water', 'north_iraq'),
+  makeLandmark('akre', 'Akre Historic Town (ئاکرێ)', 'North Iraq • Terraced Mountain Amphitheater • 760 m', 43.8930, 36.7410, 760, 'city', 'north_iraq'),
+  makeLandmark('kalar', 'Kalar & Garmian (کەلار)', 'North Iraq • Sirwan Basin & Sherwana Castle • 219 m', 45.3183, 34.6247, 219, 'city', 'north_iraq'),
+
+  // ================= EASTERN TURKEY (BAKUR) =================
+  makeLandmark('diyarbakir', 'Diyarbakır / Amed (ئامەد)', 'East Turkey • Tigris Valley & Basalt Walls • 675 m', 40.9200, 37.6800, 675, 'city', 'east_turkey'),
+  makeLandmark('mardin', 'Mardin Citadel (مێردین)', 'East Turkey • Hilltop Stone City Above Plains • 1,083 m', 40.8600, 37.3150, 1083, 'city', 'east_turkey'),
+  makeLandmark('lakevan', 'Lake Van & Van (دەریاچەی وان)', 'East Turkey • Largest Alpine Soda Lake • 1,640 m', 43.3800, 37.6850, 1640, 'water', 'east_turkey'),
+  makeLandmark('hakkari', 'Hakkari & Mount Cilo (جۆلەمێرگ)', 'East Turkey • Glaciated Cilo-Sat Peaks • 4,135 m', 43.7400, 37.5600, 4135, 'mountain', 'east_turkey'),
+  makeLandmark('sirnak', 'Şırnak & Mount Cudi (شڕنەخ • جودی)', 'East Turkey • Historic Mount Cudi Ridge • 2,114 m', 42.4600, 37.4200, 2114, 'mountain', 'east_turkey'),
+  makeLandmark('cizre', 'Cizre on the Tigris (جزیرە)', 'East Turkey • Tigris River Bend & Bohtan • 400 m', 42.1900, 37.3300, 400, 'city', 'east_turkey'),
+  makeLandmark('yuksekova', 'Yüksekova / Gever (گەڤەر)', 'East Turkey • High Alpine Border Basin • 1,950 m', 44.2800, 37.5700, 1950, 'border', 'east_turkey'),
+
+  // ================= EASTERN SYRIA (ROJAVA) =================
+  makeLandmark('qamishli', 'Qamishli (قامیشلۆ)', 'East Syria • Jaghjagh River & Northern Jazira • 455 m', 41.2200, 37.0500, 455, 'city', 'east_syria'),
+  makeLandmark('hasakah', 'Al-Hasakah & Khabur (حەسیچە)', 'East Syria • Khabur River Confluence • 300 m', 40.8500, 36.5000, 300, 'city', 'east_syria'),
+  makeLandmark('derik', 'Derik / Al-Malikiyah (دێرک)', 'East Syria • Tigris Tri-Border & Qarachok • 500 m', 42.1400, 37.1600, 500, 'city', 'east_syria'),
+  makeLandmark('amuda', 'Amuda & Jazira Steppe (عاموودا)', 'East Syria • Fertile Upper Mesopotamian Plain • 475 m', 40.9300, 37.1000, 475, 'city', 'east_syria'),
+  makeLandmark('qahtaniyah', 'Tirbespiyê / Qahtaniyah (تربەسپی)', 'East Syria • Eastern Jazira Basin • 420 m', 41.5500, 37.0300, 420, 'city', 'east_syria'),
+
+  // ================= WESTERN IRAN (ROJHELAT) =================
+  makeLandmark('urmia', 'Lake Urmia & Urmia (ورمێ)', 'West Iran • Hypersaline Mountain Lake • 1,330 m', 45.0700, 37.5500, 1330, 'water', 'west_iran'),
+  makeLandmark('mahabad', 'Mahabad & Dam Valley (مەهاباد)', 'West Iran • Mukriyan Cultural Capital • 1,320 m', 45.7200, 36.7600, 1320, 'city', 'west_iran'),
+  makeLandmark('sanandaj', 'Sanandaj / Sine (سنە)', 'West Iran • Mount Abidar & Kurdistan Capital • 1,480 m', 46.9900, 35.3100, 1480, 'city', 'west_iran'),
+  makeLandmark('kermanshah', 'Kermanshah & Taq-e Bostan (کرماشان)', 'West Iran • Mount Bisotun & Zagros Cliffs • 1,350 m', 47.0600, 34.3100, 1350, 'city', 'west_iran'),
+  makeLandmark('marivan', 'Marivan & Lake Zarivar (مەریوان)', 'West Iran • Alpine Lake & Hawraman East • 1,285 m', 46.1700, 35.5200, 1285, 'water', 'west_iran'),
+  makeLandmark('piranshahr', 'Piranshahr & Sardasht (پیرانشار)', 'West Iran • Little Zab Headwaters & Gorges • 1,450 m', 45.1400, 36.6900, 1450, 'mountain', 'west_iran'),
+  makeLandmark('ilam', 'Ilam & Kabir Kuh (ئیلام)', 'West Iran • Southern Zagros Oak Highlands • 1,387 m', 46.4200, 33.6300, 1387, 'mountain', 'west_iran')
 ];
 
 /**
  * Computes the exact Ground-Level 360° camera pose at any landmark or (x, z) coordinate
- * so the camera stands on solid ground and rotates 360° on the exact same spot.
+ * including Earth Globe curvature drop relative to (refX, refZ), so the camera stands
+ * on solid ground and rotates 360° on the exact same spot.
  */
 export function getGround360CameraPose(
   worldX: number,
   worldZ: number,
   terrainExaggeration = 1.35,
-  eyeHeightAboveGround = 65
+  eyeHeightAboveGround = 65,
+  refX = worldX,
+  refZ = worldZ
 ): { pos: [number, number, number]; target: [number, number, number]; groundY: number } {
   const c = getRealKurdistanElevation(worldX, worldZ);
-  const n = getRealKurdistanElevation(worldX, worldZ - 35);
-  const s = getRealKurdistanElevation(worldX, worldZ + 35);
-  const e = getRealKurdistanElevation(worldX + 35, worldZ);
-  const w = getRealKurdistanElevation(worldX - 35, worldZ);
-  const groundY = Math.max(c, n, s, e, w) * terrainExaggeration;
+  const n = getRealKurdistanElevation(worldX, worldZ - 45);
+  const s = getRealKurdistanElevation(worldX, worldZ + 45);
+  const e = getRealKurdistanElevation(worldX + 45, worldZ);
+  const w = getRealKurdistanElevation(worldX - 45, worldZ);
+  const curveDrop = getEarthCurvatureDropMeters(worldX, worldZ, refX, refZ);
+  const groundY = Math.max(c, n, s, e, w) * terrainExaggeration + curveDrop;
   const eyeY = groundY + eyeHeightAboveGround;
   return {
     groundY,
@@ -367,7 +404,7 @@ export function getGround360CameraPose(
   };
 }
 
-// Backward compatibility alias
+// Backward compatibility aliases
 export const SULAYMANIYAH_LANDMARKS = KURDISTAN_LANDMARKS;
 export const NORTH_VIETNAM_LANDMARKS = KURDISTAN_LANDMARKS;
 export const NORTH_IRAQ_LANDMARKS = KURDISTAN_LANDMARKS;

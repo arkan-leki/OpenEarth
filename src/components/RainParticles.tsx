@@ -11,6 +11,7 @@ interface RainParticlesProps {
   hasActivePrecipitation?: boolean;
   windSpeed?: number;
   cloudBaseY?: number;
+  globeRefXZ?: [number, number];
 }
 
 const MAX_RAIN_STREAKS = 28000;
@@ -18,20 +19,19 @@ const MAX_RAIN_SHAFTS = 420;
 
 /**
  * Renders 3D Falling Rain Streaks (THREE.LineSegments) and Sub-Cloud Volumetric Rain Shafts
- * strictly emerging from the bottom of the 3D clouds (cloudBaseY) down to the terrain
+ * strictly emerging from the bottom of the 3D clouds (cloudBaseY) down to the curved Earth Globe terrain
  * in the exact areas where the Rain Radar channel (weatherTexture.g > 0.04) shows rain.
  */
 export const RainParticles: React.FC<RainParticlesProps> = ({
   weatherTexture,
   snowTempThreshold = 2.5,
   windSpeed = 0.8,
-  cloudBaseY = 1900
+  cloudBaseY = 3400,
+  globeRefXZ = [0, 0]
 }) => {
   const streakMatRef = useRef<THREE.ShaderMaterial>(null);
   const shaftMatRef = useRef<THREE.ShaderMaterial>(null);
 
-  // Extract all active Rain Radar cells (G > 10 and Cloud R > 30) directly from weatherTexture
-  // so 100% of rain streaks and rain shafts pour directly from the clouds over Rain Radar zones!
   const { streakGeometry, shaftGeometry, hasRadarRainCells } = useMemo(() => {
     const dataTex = weatherTexture as THREE.DataTexture;
     const raw = dataTex?.image?.data as Uint8Array | undefined;
@@ -46,7 +46,6 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
           const idx = (py * w + px) * 4;
           const cloudNorm = raw[idx] / 255.0;
           const rainNorm = raw[idx + 1] / 255.0;
-          // Matches SatelliteMetViewerModal Rain Radar threshold (rainNorm > 0.04) + cloud overhead
           if (rainNorm > 0.04 && cloudNorm > 0.12) {
             radarCells.push({
               u: px / w,
@@ -72,20 +71,19 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
       return (seedState - 1) / 2147483646;
     };
 
-    // 1. Build 3D Rain Streak LineSegments (2 vertices per streak: top=0, bottom=1)
     const activeStreaks = Math.min(MAX_RAIN_STREAKS, Math.max(4500, radarCells.length * 14));
     const positions = new Float32Array(activeStreaks * 2 * 3);
     const cloudOrigins = new Float32Array(activeStreaks * 2 * 3);
     const vertexEnds = new Float32Array(activeStreaks * 2);
     const seeds = new Float32Array(activeStreaks * 2);
 
-    const cellSpacingX = 240000 / Math.min(256, w);
-    const cellSpacingZ = 160000 / Math.min(256, h);
+    const cellSpacingX = 480000 / Math.min(256, w);
+    const cellSpacingZ = 320000 / Math.min(256, h);
 
     for (let i = 0; i < activeStreaks; i++) {
       const cell = radarCells[(i * 13) % radarCells.length];
-      const worldX = cell.u * 240000 - 120000 + (nextRand() - 0.5) * cellSpacingX * 1.35;
-      const worldZ = cell.v * 160000 - 80000 + (nextRand() - 0.5) * cellSpacingZ * 1.35;
+      const worldX = cell.u * 480000 - 240000 + (nextRand() - 0.5) * cellSpacingX * 1.35;
+      const worldZ = cell.v * 320000 - 160000 + (nextRand() - 0.5) * cellSpacingZ * 1.35;
       const phase = nextRand();
       const sVal = nextRand();
 
@@ -113,7 +111,6 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
     lineGeo.setAttribute('aVertexEnd', new THREE.BufferAttribute(vertexEnds, 1));
     lineGeo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
 
-    // 2. Build Sub-Cloud Volumetric Rain Shaft Curtains directly beneath the Rain Radar clouds
     const baseQuad = new THREE.PlaneGeometry(1, 1, 1, 1);
     const shaftGeo = new THREE.InstancedBufferGeometry();
     shaftGeo.index = baseQuad.index;
@@ -126,10 +123,10 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
 
     for (let i = 0; i < shaftCount; i++) {
       const cell = radarCells[Math.floor((i / shaftCount) * radarCells.length)];
-      shaftOrigins[i * 3] = cell.u * 240000 - 120000;
+      shaftOrigins[i * 3] = cell.u * 480000 - 240000;
       shaftOrigins[i * 3 + 1] = nextRand() * Math.PI;
-      shaftOrigins[i * 3 + 2] = cell.v * 160000 - 80000;
-      shaftWidths[i] = 3600 + cell.rainNorm * 3200;
+      shaftOrigins[i * 3 + 2] = cell.v * 320000 - 160000;
+      shaftWidths[i] = 6200 + cell.rainNorm * 5400;
     }
 
     shaftGeo.setAttribute('aShaftOrigin', new THREE.InstancedBufferAttribute(shaftOrigins, 3));
@@ -151,7 +148,8 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
       uSnowTempThreshold: { value: snowTempThreshold },
       uFallSpeed: { value: 1850.0 },
       uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
-      uWindSpeed: { value: windSpeed }
+      uWindSpeed: { value: windSpeed },
+      uGlobeRefXZ: { value: new THREE.Vector2(globeRefXZ[0], globeRefXZ[1]) }
     }),
     []
   );
@@ -162,7 +160,8 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
       uWeatherData: { value: weatherTexture },
       uCloudBaseY: { value: cloudBaseY },
       uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
-      uWindSpeed: { value: windSpeed }
+      uWindSpeed: { value: windSpeed },
+      uGlobeRefXZ: { value: new THREE.Vector2(globeRefXZ[0], globeRefXZ[1]) }
     }),
     []
   );
@@ -175,12 +174,14 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
       streakMatRef.current.uniforms.uCloudBaseY.value = cloudBaseY;
       streakMatRef.current.uniforms.uSnowTempThreshold.value = snowTempThreshold;
       streakMatRef.current.uniforms.uWindSpeed.value = windSpeed;
+      streakMatRef.current.uniforms.uGlobeRefXZ.value.set(globeRefXZ[0], globeRefXZ[1]);
     }
     if (shaftMatRef.current) {
       shaftMatRef.current.uniforms.uTime.value = t;
       shaftMatRef.current.uniforms.uWeatherData.value = weatherTexture;
       shaftMatRef.current.uniforms.uCloudBaseY.value = cloudBaseY;
       shaftMatRef.current.uniforms.uWindSpeed.value = windSpeed;
+      shaftMatRef.current.uniforms.uGlobeRefXZ.value.set(globeRefXZ[0], globeRefXZ[1]);
     }
   });
 
@@ -190,7 +191,6 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
 
   return (
     <group>
-      {/* 1. Sub-Cloud Volumetric Rain Shafts (connects dark cloud base to terrain over Rain Radar echoes) */}
       <mesh geometry={shaftGeometry} frustumCulled={false}>
         <shaderMaterial
           ref={shaftMatRef}
@@ -203,7 +203,6 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
         />
       </mesh>
 
-      {/* 2. 3D Falling Rain Streaks & Snowflakes locked to the Rain Radar cloud base */}
       <lineSegments geometry={streakGeometry} frustumCulled={false}>
         <shaderMaterial
           ref={streakMatRef}
@@ -212,7 +211,7 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
           fragmentShader={RainStreakLineShader.fragmentShader}
           transparent={true}
           depthWrite={false}
-          blending={THREE.AdditiveBlending}
+          blending={THREE.NormalBlending}
         />
       </lineSegments>
     </group>

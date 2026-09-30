@@ -10,11 +10,13 @@ import { CloudShadowDepthProjector } from './CloudShadowDepthProjector';
 import { RainParticles } from './RainParticles';
 import { LandmarkPins, Landmark } from './LandmarkPins';
 import { AtmosphericFogAndDust } from './AtmosphericFogAndDust';
+import { AtmosphericSkyDome } from './AtmosphericSkyDome';
 import { GridChunkData, ShaderParameters } from '../types';
 import { CloudClassification, CLOUD_PROFILES } from '../services/cloudClassificationService';
 import { SunPositionResult } from '../utils/sunPosition';
 import {
   getRealKurdistanElevation,
+  getEarthCurvatureDropMeters,
   HALF_DOMAIN_WIDTH,
   HALF_DOMAIN_HEIGHT
 } from '../utils/realSulaymaniyahTerrain';
@@ -71,10 +73,17 @@ class WebGLErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryStat
 }
 
 /**
- * Samples the solid terrain elevation across a safety footprint around (x, z)
+ * Samples the solid curved Earth Globe terrain elevation across a safety footprint around (x, z)
  * so the camera can never clip into mountain slopes or go underground.
  */
-function getSolidGroundElevationAt(x: number, z: number, exaggeration: number, sampleRadius = 45): number {
+function getSolidGroundElevationAt(
+  x: number,
+  z: number,
+  exaggeration: number,
+  refX = 0,
+  refZ = 0,
+  sampleRadius = 45
+): number {
   const c = getRealKurdistanElevation(x, z);
   const n = getRealKurdistanElevation(x, z - sampleRadius);
   const s = getRealKurdistanElevation(x, z + sampleRadius);
@@ -85,7 +94,8 @@ function getSolidGroundElevationAt(x: number, z: number, exaggeration: number, s
   const nw = getRealKurdistanElevation(x - d, z - d);
   const se = getRealKurdistanElevation(x + d, z + d);
   const sw = getRealKurdistanElevation(x - d, z + d);
-  return Math.max(c, n, s, e, w, ne, nw, se, sw) * exaggeration;
+  const curveDrop = getEarthCurvatureDropMeters(x, z, refX, refZ);
+  return Math.max(c, n, s, e, w, ne, nw, se, sw) * exaggeration + curveDrop;
 }
 
 interface SceneContentProps {
@@ -151,14 +161,23 @@ const SceneContent: React.FC<SceneContentProps> = ({
   const lastActionSeqRef = useRef<number>(0);
   const lastHeadingRef = useRef<number>(-1);
 
-  // Filter chunks that are currently active in the spatial cache
   const activeChunksToRender = useMemo(() => {
     return chunks.filter(c => activeChunkIds.has(c.id));
   }, [chunks, activeChunkIds]);
 
   const terrainExaggeration = shaderParams.terrainExaggeration ?? 1.35;
 
-  // Telemetry FPS tracker
+  // Reference apex of the spherical Earth Globe:
+  // - In 360° Ground Spot Mode: centered on the observer's exact location so the Earth curves down
+  //   symmetrically in all 360° directions (-454m at 50km, -1,818m at 100km).
+  // - In Aerial Globe Mode: centered at (0, 0) so the entire 480km x 320km region forms a 3D globe cap.
+  const globeRefXZ = useMemo<[number, number]>(() => {
+    if (isGround360Mode && ground360Spot) {
+      return [ground360Spot.x, ground360Spot.z];
+    }
+    return [0, 0];
+  }, [isGround360Mode, ground360Spot]);
+
   const frameCount = useRef(0);
   const lastTime = useRef(performance.now());
 
@@ -174,20 +193,19 @@ const SceneContent: React.FC<SceneContentProps> = ({
     const ctrl = controlsRef.current;
     if (!ctrl) return;
 
-    // Handle discrete 360° HUD rotation/pitch button actions
+    const [refX, refZ] = globeRefXZ;
+
     if (cameraActionTick && cameraActionTick.seq !== lastActionSeqRef.current) {
       lastActionSeqRef.current = cameraActionTick.seq;
       const offset = camera.position.clone().sub(ctrl.target);
       const spherical = new THREE.Spherical().setFromVector3(offset);
       if (cameraActionTick.type === 'left') {
-        spherical.theta += Math.PI / 6; // Rotate 30° left on the same spot
+        spherical.theta += Math.PI / 6;
       } else if (cameraActionTick.type === 'right') {
-        spherical.theta -= Math.PI / 6; // Rotate 30° right on the same spot
+        spherical.theta -= Math.PI / 6;
       } else if (cameraActionTick.type === 'look_up') {
-        // Tilt camera upward to look at the 3D clouds and falling rain from the ground
         spherical.phi = Math.PI * 0.68;
       } else if (cameraActionTick.type === 'horizon') {
-        // Level camera horizontally at the 360° ground horizon
         spherical.phi = Math.PI * 0.50;
       }
       offset.setFromSpherical(spherical);
@@ -195,16 +213,14 @@ const SceneContent: React.FC<SceneContentProps> = ({
       ctrl.update();
     }
 
-    // 1. Smooth camera transition if a target pose was requested
     if (targetCameraPose) {
       const targetVec = new THREE.Vector3(...targetCameraPose.pos);
       const lookAtVec = new THREE.Vector3(...targetCameraPose.target);
 
-      camera.position.lerp(targetVec, 0.10);
-      ctrl.target.lerp(lookAtVec, 0.12);
+      camera.position.lerp(targetVec, 0.11);
+      ctrl.target.lerp(lookAtVec, 0.13);
 
-      // Keep camera strictly above solid ground during flight over mountain ridges
-      const flightFloorY = getSolidGroundElevationAt(camera.position.x, camera.position.z, terrainExaggeration, 45) + 60;
+      const flightFloorY = getSolidGroundElevationAt(camera.position.x, camera.position.z, terrainExaggeration, refX, refZ, 45) + 60;
       if (camera.position.y < flightFloorY) {
         camera.position.y = flightFloorY;
       }
@@ -218,15 +234,11 @@ const SceneContent: React.FC<SceneContentProps> = ({
         onClearTargetPose();
       }
     } else if (isGround360Mode && ground360Spot) {
-      // 2. GROUND-LEVEL 360° SPOT MODE:
-      // Keep the camera anchored at ground level on the exact same spot (ground360Spot.x, ground360Spot.z)
-      // so dragging rotates 360° around the spot without drifting away or going underground.
       const spotX = THREE.MathUtils.clamp(ground360Spot.x, -HALF_DOMAIN_WIDTH + 400, HALF_DOMAIN_WIDTH - 400);
       const spotZ = THREE.MathUtils.clamp(ground360Spot.z, -HALF_DOMAIN_HEIGHT + 400, HALF_DOMAIN_HEIGHT - 400);
-      const solidGroundY = getSolidGroundElevationAt(spotX, spotZ, terrainExaggeration, 35);
+      const solidGroundY = getSolidGroundElevationAt(spotX, spotZ, terrainExaggeration, refX, refZ, 35);
       const eyeY = solidGroundY + 65;
 
-      // Preserve current 360° look direction (spherical angles) while locking target to the exact ground spot
       const offset = camera.position.clone().sub(ctrl.target);
       if (offset.lengthSq() < 0.001) {
         offset.set(0, 0.3, 2.0);
@@ -237,33 +249,29 @@ const SceneContent: React.FC<SceneContentProps> = ({
       ctrl.target.set(spotX, eyeY, spotZ);
       camera.position.copy(ctrl.target).add(offset);
 
-      // Hard solid-ground enforcement at the camera's exact position
-      const localFloorY = getSolidGroundElevationAt(camera.position.x, camera.position.z, terrainExaggeration, 25) + 55;
+      const localFloorY = getSolidGroundElevationAt(camera.position.x, camera.position.z, terrainExaggeration, refX, refZ, 25) + 55;
       if (camera.position.y < localFloorY) {
         camera.position.y = localFloorY;
       }
       ctrl.update();
     } else {
-      // 3. AERIAL ORBIT MODE:
-      // Enforce 100% solid ground collision so the camera and orbit target can NEVER go beneath the terrain
       camera.position.x = THREE.MathUtils.clamp(camera.position.x, -HALF_DOMAIN_WIDTH + 400, HALF_DOMAIN_WIDTH - 400);
       camera.position.z = THREE.MathUtils.clamp(camera.position.z, -HALF_DOMAIN_HEIGHT + 400, HALF_DOMAIN_HEIGHT - 400);
       ctrl.target.x = THREE.MathUtils.clamp(ctrl.target.x, -HALF_DOMAIN_WIDTH + 400, HALF_DOMAIN_WIDTH - 400);
       ctrl.target.z = THREE.MathUtils.clamp(ctrl.target.z, -HALF_DOMAIN_HEIGHT + 400, HALF_DOMAIN_HEIGHT - 400);
 
-      const solidTargetFloorY = getSolidGroundElevationAt(ctrl.target.x, ctrl.target.z, terrainExaggeration, 40) + 25;
+      const solidTargetFloorY = getSolidGroundElevationAt(ctrl.target.x, ctrl.target.z, terrainExaggeration, refX, refZ, 40) + 25;
       if (ctrl.target.y < solidTargetFloorY) {
         ctrl.target.y = solidTargetFloorY;
       }
 
-      const solidCamFloorY = getSolidGroundElevationAt(camera.position.x, camera.position.z, terrainExaggeration, 65) + 80;
+      const solidCamFloorY = getSolidGroundElevationAt(camera.position.x, camera.position.z, terrainExaggeration, refX, refZ, 65) + 80;
       if (camera.position.y < solidCamFloorY) {
         camera.position.y = solidCamFloorY;
         ctrl.update();
       }
     }
 
-    // Report live 360° compass heading (0° = North/-Z, 90° = East/+X, 180° = South/+Z, 270° = West/-X)
     if (onUpdateCompassHeading) {
       const lookDir = new THREE.Vector3();
       camera.getWorldDirection(lookDir);
@@ -275,7 +283,6 @@ const SceneContent: React.FC<SceneContentProps> = ({
     }
   });
 
-  // Double-clicking any point on the solid ground places the 360° Ground Camera right on that spot
   const handleTerrainDoubleClick = (e: ThreeEvent<MouseEvent>) => {
     e.stopPropagation();
     if (onSpotGroundClick && e.point) {
@@ -285,35 +292,38 @@ const SceneContent: React.FC<SceneContentProps> = ({
 
   return (
     <>
+      {/* 0a. 3D Rayleigh & Mie Atmospheric Blue Sky Dome */}
+      <AtmosphericSkyDome sunPosition={sunPosition} />
+
       {/* Dynamic Astronomical Atmospheric Lighting */}
       <ambientLight
-        intensity={sunPosition ? sunPosition.ambientIntensity : 0.7}
+        intensity={sunPosition ? sunPosition.ambientIntensity : 0.8}
         color={sunPosition ? sunPosition.ambientColor : '#dbeafe'}
       />
       <directionalLight
-        position={sunPosition ? sunPosition.lightPosition : [90000, 120000, 70000]}
-        intensity={sunPosition ? sunPosition.lightIntensity : 1.5}
-        color={sunPosition ? sunPosition.lightColor : '#fff5e6'}
+        position={sunPosition ? sunPosition.lightPosition : [120000, 160000, 90000]}
+        intensity={sunPosition ? sunPosition.lightIntensity : 1.75}
+        color={sunPosition ? sunPosition.lightColor : '#fff8ee'}
         castShadow
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1000}
-        shadow-camera-far={420000}
-        shadow-camera-left={-140000}
-        shadow-camera-right={140000}
-        shadow-camera-top={100000}
-        shadow-camera-bottom={-100000}
+        shadow-camera-far={620000}
+        shadow-camera-left={-250000}
+        shadow-camera-right={250000}
+        shadow-camera-top={180000}
+        shadow-camera-bottom={-180000}
         shadow-bias={-0.0002}
         shadow-normalBias={0.04}
       />
       {/* Sky bounce fill light */}
       <directionalLight
-        position={[-80000, 50000, -80000]}
-        intensity={sunPosition ? sunPosition.ambientIntensity * 0.45 : 0.55}
+        position={[-120000, 80000, -120000]}
+        intensity={sunPosition ? sunPosition.ambientIntensity * 0.5 : 0.6}
         color={sunPosition ? sunPosition.ambientColor : '#7dd3fc'}
       />
 
-      {/* 0. Secondary Offscreen GPU Depth-Buffer & Multi-Octave FBM Cloud Shadow Projector */}
+      {/* 0b. Secondary Offscreen GPU Depth-Buffer & Multi-Octave FBM Cloud Shadow Projector */}
       {showClouds && (
         <CloudShadowDepthProjector
           weatherTexture={weatherTexture}
@@ -324,7 +334,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
         />
       )}
 
-      {/* 1. SPATIAL CHUNKING: Solid 3D High-Definition Kurdistan Terrain + Geological Bedrock Base */}
+      {/* 1. SPATIAL CHUNKING: Solid 480km x 320km Curved Earth Globe Terrain (East Turkey, East Syria, North Iraq, West Iran) */}
       <group onDoubleClick={handleTerrainDoubleClick}>
         {activeChunksToRender.map((chunk) => (
           <TerrainChunk
@@ -337,17 +347,19 @@ const SceneContent: React.FC<SceneContentProps> = ({
             terrainExaggeration={terrainExaggeration}
             customTexture={groundTexture}
             phenomenaTexture={phenomenaTexture}
+            weatherTexture={weatherTexture}
             cloudShadowDepthTexture={showClouds ? cloudShadowDepthTexture : null}
             cloudBaseY={classification.baseAltitudeM}
             cloudTopY={classification.topAltitudeM}
             sunPosition={sunPosition}
+            globeRefXZ={globeRefXZ}
           />
         ))}
 
-        {/* Solid Subterranean Bedrock Slab underneath the entire 240km x 160km terrain domain */}
-        <mesh position={[0, -3900, 0]} receiveShadow={false}>
-          <boxGeometry args={[240000, 8000, 160000]} />
-          <meshStandardMaterial color="#161412" roughness={0.96} metalness={0.02} />
+        {/* Solid Subterranean Planetary Crust Base beneath the curved globe domain */}
+        <mesh position={[0, -14500, 0]} receiveShadow={false}>
+          <boxGeometry args={[480000, 14000, 320000]} />
+          <meshStandardMaterial color="#162133" roughness={0.95} metalness={0.02} />
         </mesh>
       </group>
 
@@ -361,17 +373,18 @@ const SceneContent: React.FC<SceneContentProps> = ({
         />
       )}
 
-      {/* 2. Lower/Mid-Level Volumetric Raymarching 3D Clouds (☁️ Cumulus & Cumulonimbus Columns) */}
+      {/* 2. Lower/Mid-Level Volumetric Raymarching 3D Clouds (Curved over Earth Globe + Distant Blue Scatter) */}
       {showClouds && (
         <VolumetricClouds
           weatherTexture={weatherTexture}
           params={shaderParams}
           classification={classification}
           sunPosition={sunPosition}
+          globeRefXZ={globeRefXZ}
         />
       )}
 
-      {/* 2b. Localized Satellite-Conforming Cloud Shell & Cumulus Billboards (Anchored at cloudBaseY) */}
+      {/* 2b. Localized Satellite-Conforming Cumulus Billboards (Anchored at cloudBaseY + Earth Globe Curvature) */}
       {showClouds && (
         <HighAltitudeCirrusParticles
           weatherTexture={weatherTexture}
@@ -379,6 +392,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
           windSpeed={shaderParams.windSpeed}
           cloudBaseY={classification.baseAltitudeM}
           visible={showClouds}
+          globeRefXZ={globeRefXZ}
         />
       )}
 
@@ -392,31 +406,33 @@ const SceneContent: React.FC<SceneContentProps> = ({
           hasActivePrecipitation={hasActivePrecipitation}
           windSpeed={shaderParams.windSpeed}
           cloudBaseY={classification.baseAltitudeM}
+          globeRefXZ={globeRefXZ}
         />
       )}
 
-      {/* 5. 3D Landmark Pins across all 28 Kurdistan & Northern Iraq locations */}
+      {/* 5. 3D Landmark Pins across all 36 locations in East Turkey, East Syria, West Iran & North Iraq */}
       <LandmarkPins
         visible={showPins}
         terrainExaggeration={terrainExaggeration}
         selectedLandmarkId={selectedChunkId || undefined}
         isGround360Mode={isGround360Mode}
+        globeRefXZ={globeRefXZ}
         onSelectLandmark={onSelectLandmark}
       />
 
-      {/* Camera Controls: Supports both 360° Ground Spot Mode (rotates 360° on the exact same spot) & Solid Aerial Orbit */}
+      {/* Camera Controls: Supports both 360° Ground Spot Mode & Solid Aerial Globe Orbit */}
       <OrbitControls
         ref={controlsRef}
         makeDefault
         autoRotate={autoRotate}
-        autoRotateSpeed={isGround360Mode ? 1.1 : 0.4}
+        autoRotateSpeed={isGround360Mode ? 1.1 : 0.35}
         enablePan={!isGround360Mode}
         enableZoom={!isGround360Mode}
         rotateSpeed={isGround360Mode ? -0.45 : 0.75}
         minPolarAngle={isGround360Mode ? Math.PI * 0.16 : 0.05}
         maxPolarAngle={isGround360Mode ? Math.PI * 0.82 : Math.PI / 2.06}
         minDistance={isGround360Mode ? 2.0 : 400}
-        maxDistance={isGround360Mode ? 2.0 : 250000}
+        maxDistance={isGround360Mode ? 2.0 : 460000}
         enableDamping={true}
         dampingFactor={0.07}
       />
@@ -456,15 +472,15 @@ export interface WeatherSimulationViewProps {
 
 export const WeatherSimulationView: React.FC<WeatherSimulationViewProps> = (props) => {
   return (
-    <div className="w-full h-full relative bg-[#090C10] overflow-hidden">
+    <div className="w-full h-full relative bg-[#1c64b8] overflow-hidden">
       <WebGLErrorBoundary>
         <Canvas
           shadows={false}
           camera={{
-            position: [0, 68000, 85000],
+            position: [0, 125000, 175000],
             fov: 55,
             near: 8,
-            far: 500000
+            far: 850000
           }}
           gl={{
             antialias: true,
@@ -485,8 +501,8 @@ export const WeatherSimulationView: React.FC<WeatherSimulationViewProps> = (prop
             }, false);
           }}
         >
-          <color attach="background" args={[props.sunPosition?.skyColor ?? '#0B0E14']} />
-          <fog attach="fog" args={[props.sunPosition?.fogColor ?? '#0F172A', 190000, 480000]} />
+          <color attach="background" args={[props.sunPosition?.skyColor ?? '#1c64b8']} />
+          <fog attach="fog" args={[props.sunPosition?.fogColor ?? '#72b6fa', 120000, 520000]} />
           <SceneContent {...props} />
         </Canvas>
       </WebGLErrorBoundary>

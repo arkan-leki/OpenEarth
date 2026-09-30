@@ -41,16 +41,18 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
   compassHeading,
   onCameraAction
 }) => {
-  const [activeCategory, setActiveCategory] = useState<'all' | 'city' | 'mountain' | 'water' | 'border'>('all');
+  const [activeRegion, setActiveRegion] = useState<
+    'all' | 'north_iraq' | 'east_turkey' | 'east_syria' | 'west_iran'
+  >('all');
 
   const currentLandmark = useMemo(() => {
     return KURDISTAN_LANDMARKS.find((l) => l.id === selectedLandmarkId) || KURDISTAN_LANDMARKS[0];
   }, [selectedLandmarkId]);
 
   const filteredLandmarks = useMemo(() => {
-    if (activeCategory === 'all') return KURDISTAN_LANDMARKS;
-    return KURDISTAN_LANDMARKS.filter((l) => l.type === activeCategory);
-  }, [activeCategory]);
+    if (activeRegion === 'all') return KURDISTAN_LANDMARKS;
+    return KURDISTAN_LANDMARKS.filter((l) => l.region === activeRegion);
+  }, [activeRegion]);
 
   const handleStepLocation = (delta: number) => {
     const idx = KURDISTAN_LANDMARKS.findIndex((l) => l.id === selectedLandmarkId);
@@ -77,7 +79,7 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
               }`}
               title={
                 isGround360Mode
-                  ? 'Currently standing at Ground Level in 360° Spot Mode • Click to switch to Aerial Map View'
+                  ? 'Standing on curved Earth Globe at Ground Level in 360° Spot Mode • Click for Full 4-Region Globe View'
                   : 'Click to drop down to Ground Level at this location and rotate 360° on the same spot'
               }
             >
@@ -121,7 +123,6 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
 
           {/* Right: Live 360° Compass Heading & Same-Spot Camera Rotation Buttons */}
           <div className="flex items-center gap-1 text-[11px] font-mono">
-            {/* Compass Heading Readout */}
             <div
               className="px-2 py-1 rounded-lg bg-slate-900 border border-slate-700/80 text-amber-300 font-bold flex items-center gap-1"
               title="Live 360° Camera Compass Heading"
@@ -131,7 +132,6 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
               <span className="text-slate-400">{cardinal}</span>
             </div>
 
-            {/* Rotate Left 30° on same spot */}
             <button
               id="btn-360-turn-left"
               onClick={() => onCameraAction('left')}
@@ -141,7 +141,6 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
               <RotateCcw className="w-3.5 h-3.5" />
             </button>
 
-            {/* Continuous 360° Auto-Spin on same spot */}
             <button
               id="btn-360-auto-spin"
               onClick={onToggleAutoRotate}
@@ -156,7 +155,6 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
               <span className="hidden sm:inline">360° Spin</span>
             </button>
 
-            {/* Rotate Right 30° on same spot */}
             <button
               id="btn-360-turn-right"
               onClick={() => onCameraAction('right')}
@@ -166,12 +164,11 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
               <RotateCw className="w-3.5 h-3.5" />
             </button>
 
-            {/* Tilt Up to Clouds / Horizon */}
             <button
               id="btn-360-look-clouds"
               onClick={() => onCameraAction('look_up')}
               className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/70 text-cyan-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-              title="Look up at the 3D clouds & rain from ground level"
+              title="Look up at the blue sky, 3D clouds & rain from ground level"
             >
               <Cloud className="w-3 h-3" />
               <span className="hidden md:inline">Sky</span>
@@ -180,7 +177,7 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
               id="btn-360-look-horizon"
               onClick={() => onCameraAction('horizon')}
               className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700/70 text-emerald-300 hover:text-white transition-colors cursor-pointer flex items-center gap-1"
-              title="Level camera at 360° Ground Horizon"
+              title="Level camera at 50km-100km curved Earth Globe Horizon"
             >
               <Eye className="w-3 h-3" />
               <span className="hidden md:inline">Horizon</span>
@@ -188,36 +185,36 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
           </div>
         </div>
 
-        {/* Category Filter Tabs + Scrollable 28 Ground-Level Locations */}
+        {/* 4-Region Filter Tabs (North Iraq, East Turkey, East Syria, West Iran) + Scrollable 36 Ground Locations */}
         <div className="pt-2 flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
             <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
               {[
-                { id: 'all', label: `All (${KURDISTAN_LANDMARKS.length})` },
-                { id: 'city', label: 'Cities & Citadels' },
-                { id: 'mountain', label: 'Mountain Peaks' },
-                { id: 'water', label: 'Lakes & Canyons' },
-                { id: 'border', label: 'Alpine Passes' }
-              ].map((cat) => (
+                { id: 'all', label: `All 4 Regions (${KURDISTAN_LANDMARKS.length})` },
+                { id: 'north_iraq', label: 'North Iraq (17)' },
+                { id: 'east_turkey', label: 'East Turkey (7)' },
+                { id: 'east_syria', label: 'East Syria (5)' },
+                { id: 'west_iran', label: 'West Iran (7)' }
+              ].map((reg) => (
                 <button
-                  key={cat.id}
-                  onClick={() => setActiveCategory(cat.id as typeof activeCategory)}
+                  key={reg.id}
+                  onClick={() => setActiveRegion(reg.id as typeof activeRegion)}
                   className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
-                    activeCategory === cat.id
+                    activeRegion === reg.id
                       ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50 font-bold'
                       : 'text-slate-400 hover:text-slate-200 hover:bg-slate-900'
                   }`}
                 >
-                  {cat.label}
+                  {reg.label}
                 </button>
               ))}
             </div>
             <span className="text-slate-400 hidden sm:inline shrink-0">
-              {isGround360Mode ? 'Drag to look 360° on spot • Solid ground locked' : 'Click any location for 360° Ground View'}
+              Globe Horizon: 50km Land • 100km Mountain
             </span>
           </div>
 
-          {/* Horizontal Scrollable Pills for all 28 Locations */}
+          {/* Horizontal Scrollable Pills for all 36 Locations */}
           <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5 scrollbar-none">
             {filteredLandmarks.map((lm) => {
               const isSelected = lm.id === selectedLandmarkId;

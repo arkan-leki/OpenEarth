@@ -1,7 +1,11 @@
 import React from 'react';
 import { Html } from '@react-three/drei';
 import { Landmark } from '../types';
-import { KURDISTAN_LANDMARKS, getRealKurdistanElevation } from '../utils/realSulaymaniyahTerrain';
+import {
+  KURDISTAN_LANDMARKS,
+  getRealKurdistanElevation,
+  getEarthCurvatureDropMeters
+} from '../utils/realSulaymaniyahTerrain';
 
 export type { Landmark };
 export const LANDMARKS: Landmark[] = KURDISTAN_LANDMARKS;
@@ -12,6 +16,7 @@ interface LandmarkPinsProps {
   terrainExaggeration?: number;
   selectedLandmarkId?: string;
   isGround360Mode?: boolean;
+  globeRefXZ?: [number, number];
 }
 
 export const LandmarkPins: React.FC<LandmarkPinsProps> = ({
@@ -19,14 +24,14 @@ export const LandmarkPins: React.FC<LandmarkPinsProps> = ({
   visible = true,
   terrainExaggeration = 1.35,
   selectedLandmarkId,
-  isGround360Mode = false
+  isGround360Mode = false,
+  globeRefXZ = [0, 0]
 }) => {
   if (!visible) return null;
 
   return (
     <group>
       {LANDMARKS.map((lm) => {
-        // Hide the pin we are currently standing inside when in 360° Ground Mode so it doesn't block our eyes
         if (isGround360Mode && selectedLandmarkId === lm.id) {
           return null;
         }
@@ -51,27 +56,28 @@ export const LandmarkPins: React.FC<LandmarkPinsProps> = ({
 
         const wx = lm.position[0];
         const wz = lm.position[2];
-        const groundY = getRealKurdistanElevation(wx, wz) * terrainExaggeration;
+        const globeDrop = getEarthCurvatureDropMeters(wx, wz, globeRefXZ[0], globeRefXZ[1]);
+        const groundY = getRealKurdistanElevation(wx, wz) * terrainExaggeration + globeDrop;
 
         return (
           <group key={lm.id} position={[wx, groundY + 140, wz]}>
             {/* Vertical 3D locator beacon pillar */}
             <mesh position={[0, -70, 0]}>
-              <cylinderGeometry args={[32, 12, 140, 8]} />
+              <cylinderGeometry args={[48, 16, 140, 8]} />
               <meshBasicMaterial color={pinColor} transparent opacity={0.65} />
             </mesh>
 
             {/* Glowing top orb */}
-            <mesh position={[0, 15, 0]}>
-              <sphereGeometry args={[55, 16, 16]} />
+            <mesh position={[0, 18, 0]}>
+              <sphereGeometry args={[75, 16, 16]} />
               <meshBasicMaterial color={pinColor} />
             </mesh>
 
             {/* Interactive HTML Billboard Marker */}
             <Html
-              position={[0, 130, 0]}
+              position={[0, 150, 0]}
               center
-              distanceFactor={24000}
+              distanceFactor={38000}
               zIndexRange={[100, 0]}
             >
               <button

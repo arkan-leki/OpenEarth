@@ -29,6 +29,7 @@ export interface Landmark {
   lon?: number;
   lat?: number;
   elevationM?: number;
+  region?: 'north_iraq' | 'east_turkey' | 'east_syria' | 'west_iran';
   position: [number, number, number];
   type: 'city' | 'water' | 'mountain' | 'weather' | 'border';
   cameraTarget?: [number, number, number];
