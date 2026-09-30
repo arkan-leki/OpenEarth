@@ -41,14 +41,14 @@ import {
 } from './services/satelliteCloudService';
 
 const DEFAULT_SHADER_PARAMS: ShaderParameters = {
-  raymarchSteps: 36,
+  raymarchSteps: 44,
   cloudDensityMultiplier: 1.5,
   absorptionFactor: 0.65,
   sunScatterIntensity: 1.6,
   windSpeed: 0.8,
-  rainThreshold: 0.25,
+  rainThreshold: 0.04,
   snowTempThreshold: 3.0,
-  cloudAltitude: 2200,
+  cloudAltitude: 3400,
   cloudThickness: 1800,
   lightningFrequency: 0.7,
   terrainExaggeration: 1.35,
@@ -390,13 +390,14 @@ export default function App() {
       baseProfile = CLOUD_PROFILES.clear_sky;
     }
 
-    const realBaseM = computeRealCloudBaseMeters(weatherPayload);
+    const lclBaseM = computeRealCloudBaseMeters(weatherPayload);
+    const userAdjustedBaseM = shaderParams.cloudAltitude ?? lclBaseM;
     return {
       ...baseProfile,
-      baseAltitudeM: realBaseM,
-      topAltitudeM: realBaseM + baseProfile.thicknessM
+      baseAltitudeM: userAdjustedBaseM,
+      topAltitudeM: userAdjustedBaseM + baseProfile.thicknessM
     };
-  }, [activeCloudCoveragePct, satelliteCloudAnalysis, activeMaxPrecipitation, weatherPayload]);
+  }, [activeCloudCoveragePct, satelliteCloudAnalysis, activeMaxPrecipitation, weatherPayload, shaderParams.cloudAltitude]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#07090E] select-none">
@@ -438,6 +439,7 @@ export default function App() {
           satelliteMode={satelliteMode}
           onChangeSatelliteMode={handleChangeSatelliteMode}
           satelliteDate={effectiveSatelliteDate}
+          onSelectSatelliteDate={handleSelectSatelliteDate}
           satelliteCloudCoveragePct={activeCloudCoveragePct}
           isSatelliteCloudLoading={isSatelliteCloudLoading}
           isTodayPending={satelliteCloudAnalysis?.isTodayPending}

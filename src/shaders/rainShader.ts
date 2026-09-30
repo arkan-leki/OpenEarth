@@ -1,188 +1,236 @@
 /**
- * Proximity-Based Rain and Snow Particle Shader & Rain Shaft Shader
- * Uses Instanced/Point particles and samples the THREE.DataTexture to only precipitate
- * where rain/snow intensity is active.
+ * Cloud-Locked Rain Radar Precipitation Shader (3D Rain Streaks & Sub-Cloud Rain Shafts)
+ *
+ * Ensures 100% of falling rain/snow emerges directly from the bottom of the 3D clouds
+ * (uCloudBaseY + 220m) down to the terrain surface strictly in the exact areas where
+ * the Rain Radar channel (uWeatherData.g) shows active precipitation.
  */
 import * as THREE from 'three';
 
-export const PrecipitationShader = {
+export const RainStreakLineShader = {
   uniforms: {
     uTime: { value: 0 },
-    uWeatherData: { value: null as THREE.DataTexture | null },
-    uCameraPos: { value: new THREE.Vector3(0, 0, 0) },
-    uBoxSize: { value: new THREE.Vector3(240000, 3200, 160000) },
-    uRainThreshold: { value: 0.25 },
-    uSnowTempThreshold: { value: 3.0 }, // below 3 deg C -> snow
-    uFallSpeed: { value: 2400.0 },
+    uWeatherData: { value: null as THREE.Texture | null },
+    uCloudBaseY: { value: 1900.0 },
+    uSnowTempThreshold: { value: 2.5 },
+    uFallSpeed: { value: 1850.0 },
     uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
-    uPredictedOffset: { value: new THREE.Vector2(0.0, 0.0) },
-    uWindSpeed: { value: 0.8 },
-    uParticleScale: { value: 28.0 },
+    uWindSpeed: { value: 0.8 }
   },
 
   vertexShader: `
+    precision highp float;
+
     uniform float uTime;
     uniform sampler2D uWeatherData;
-    uniform vec3 uCameraPos;
-    uniform vec3 uBoxSize;
-    uniform float uRainThreshold;
+    uniform float uCloudBaseY;
     uniform float uSnowTempThreshold;
     uniform float uFallSpeed;
     uniform vec2 uWindDir;
-    uniform vec2 uPredictedOffset;
     uniform float uWindSpeed;
-    uniform float uParticleScale;
 
+    attribute vec3 aCloudOrigin; // x, z = cloud-base origin in world meters; y = initial phase [0..1]
+    attribute float aVertexEnd;  // 0.0 = top of rain streak, 1.0 = bottom tip of rain streak
     attribute float aSeed;
-    attribute float aSpeedOffset;
 
-    varying float vType; // 0.0 = rain, 1.0 = snow
+    varying float vEnd;
     varying float vIntensity;
+    varying float vIsSnow;
     varying float vAlpha;
 
     void main() {
-      // Local particle position
-      vec3 pos = position;
+      vEnd = aVertexEnd;
 
-      // Vertical falling loop (from sub-cloud level down to ground)
-      float fall = uTime * (uFallSpeed * (0.85 + aSpeedOffset * 0.35));
-      pos.y = mod(pos.y - fall, uBoxSize.y);
+      // Exact same wind drift speed (3.5) as CloudShader so rain stays 100% locked under its parent cloud
+      vec2 dynamicDrift = uWindDir * (uTime * uWindSpeed * 3.5);
+      vec2 cloudXZ = aCloudOrigin.xz + dynamicDrift;
 
-      // Slanted precipitation angle matching wind direction
-      float dropSlant = (uBoxSize.y - pos.y) * 0.16;
-      pos.x += uWindDir.x * dropSlant + sin(uTime * 1.5 + aSeed * 6.28) * 35.0;
-      pos.z += uWindDir.y * dropSlant + cos(uTime * 1.5 + aSeed * 6.28) * 35.0;
+      // Sample uWeatherData at the exact parent cloud UV
+      vec2 uv = clamp(vec2(
+        (aCloudOrigin.x + 120000.0) / 240000.0,
+        (aCloudOrigin.z + 80000.0) / 160000.0
+      ), 0.002, 0.998);
 
-      // World position spanning terrain domain
-      vec3 worldPos;
-      worldPos.x = pos.x;
-      worldPos.y = 80.0 + pos.y;
-      worldPos.z = pos.z;
-
-      // Unified advection matching clouds 100% so rain and clouds move together in lockstep
-      vec2 dynamicDrift = uWindDir * (uTime * uWindSpeed * 10.0);
-      vec2 advectedPos = worldPos.xz - (uPredictedOffset + dynamicDrift);
-      vec2 uv = vec2(
-        (advectedPos.x + 120000.0) / 240000.0,
-        (advectedPos.y + 80000.0) / 160000.0
-      );
-      uv = clamp(uv, 0.002, 0.998);
       vec4 weather = texture2D(uWeatherData, uv);
-
+      float cloudDensity = weather.r;
       float rainIntensity = weather.g;
-      float temp = (weather.b * 47.0) - 5.0; // decode -5C to 42C
+      float tempC = (weather.b * 47.0) - 5.0;
 
-      // If no rain in this grid cell, hide particle completely
-      if (rainIntensity <= 0.01 || rainIntensity < uRainThreshold) {
-        gl_PointSize = 0.0;
-        gl_Position = vec4(2.0, 2.0, 2.0, 1.0); // offscreen
+      // Strictly require BOTH active Rain Radar echo (weather.g > 0.04) AND cloud overhead (weather.r > 0.12)
+      if (rainIntensity < 0.04 || cloudDensity < 0.12) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
         vAlpha = 0.0;
         return;
       }
 
-      // Check if snow vs rain
-      float isSnow = step(temp, uSnowTempThreshold);
-      vType = isSnow;
       vIntensity = rainIntensity;
+      float isSnow = step(tempC, uSnowTempThreshold);
+      vIsSnow = isSnow;
 
-      // Distance attenuation
-      vec4 mvPosition = modelViewMatrix * vec4(worldPos, 1.0);
-      float dist = -mvPosition.z;
-      
-      // Point size based on distance and intensity
-      float size = (isSnow > 0.5 ? 28.0 : uParticleScale * 1.5) * (0.8 + rainIntensity * 1.4);
-      gl_PointSize = clamp(size * (12000.0 / max(dist, 1000.0)), 2.5, 48.0);
+      // Vertical column from inside the dark cloud base (uCloudBaseY + 240m) down to ground (~280m)
+      float topY = uCloudBaseY + 240.0;
+      float bottomY = 260.0;
+      float columnHeight = max(800.0, topY - bottomY);
 
-      // Fade out near camera and smoothly at great distances up to 140km
-      float nearFade = smoothstep(40.0, 300.0, dist);
-      float farFade = 1.0 - smoothstep(70000.0, 140000.0, dist);
-      vAlpha = nearFade * farFade * clamp(rainIntensity * 1.7, 0.0, 0.95);
+      float speed = (isSnow > 0.5 ? uFallSpeed * 0.38 : uFallSpeed) * (0.82 + aSeed * 0.36);
+      float fallPhase = fract(aCloudOrigin.y + (uTime * speed) / columnHeight);
 
-      gl_Position = projectionMatrix * mvPosition;
+      // Current head altitude of the streak (1.0 = emerging from cloud base, 0.0 = hitting terrain)
+      float headY = mix(topY, bottomY, fallPhase);
+
+      // 3D streak length (longer for heavy radar downpours)
+      float streakLen = isSnow > 0.5
+        ? 45.0
+        : mix(135.0, 265.0, clamp(rainIntensity, 0.0, 1.0));
+
+      float vertY = headY - aVertexEnd * streakLen;
+
+      // Wind-slanted trajectory from cloud base toward the ground
+      float dropProgress = clamp((topY - vertY) / columnHeight, 0.0, 1.0);
+      vec2 windSlantXZ = uWindDir * (dropProgress * 240.0 * uWindSpeed);
+
+      vec3 worldPos = vec3(
+        cloudXZ.x + windSlantXZ.x,
+        vertY,
+        cloudXZ.y + windSlantXZ.y
+      );
+
+      // Smooth fade-in inside the cloud underbelly and fade-out at ground impact
+      float cloudExitFade = smoothstep(0.0, 0.12, fallPhase);
+      float groundHitFade = 1.0 - smoothstep(0.86, 1.0, fallPhase);
+      vAlpha = cloudExitFade * groundHitFade * clamp(0.45 + rainIntensity * 0.65, 0.0, 0.95);
+
+      gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
     }
   `,
 
   fragmentShader: `
     precision highp float;
 
-    varying float vType;
+    varying float vEnd;
     varying float vIntensity;
+    varying float vIsSnow;
     varying float vAlpha;
 
     void main() {
       if (vAlpha <= 0.01) discard;
 
-      vec2 pt = gl_PointCoord - vec2(0.5);
+      // Brighter toward the leading raindrop tip (vEnd -> 1.0), feathered tail (vEnd -> 0.0)
+      float tipGlow = smoothstep(0.0, 0.85, vEnd);
 
-      if (vType > 0.5) {
-        // Snow flake: soft round flake with fuzzy edge
-        float r = length(pt);
-        if (r > 0.5) discard;
-        float snowSoft = smoothstep(0.5, 0.05, r);
-        gl_FragColor = vec4(0.95, 0.98, 1.0, vAlpha * snowSoft * 0.90);
-      } else {
-        // Rain streak: elongated vertical streak
-        if (abs(pt.x) > 0.22 || abs(pt.y) > 0.5) discard;
-        float streak = (1.0 - abs(pt.x) / 0.22) * (1.0 - abs(pt.y) / 0.5);
-        // Cool atmospheric rain streak color with specular glint
-        vec3 dropColor = mix(vec3(0.70, 0.82, 0.94), vec3(0.92, 0.96, 1.0), vIntensity * 0.5);
-        gl_FragColor = vec4(dropColor, vAlpha * streak * 0.85);
-      }
+      vec3 rainCol = mix(
+        vec3(0.68, 0.82, 0.96),
+        vec3(0.88, 0.95, 1.00),
+        tipGlow * 0.7 + vIntensity * 0.3
+      );
+      vec3 snowCol = vec3(0.96, 0.98, 1.00);
+      vec3 finalCol = mix(rainCol, snowCol, vIsSnow);
+
+      gl_FragColor = vec4(finalCol, vAlpha * (0.45 + 0.55 * tipGlow));
     }
   `
 };
 
 /**
- * Rain Shaft Shader for the dramatic atmospheric precipitation curtain beneath clouds
+ * Volumetric Sub-Cloud Rain Shaft Curtain Shader
+ * Renders soft, streaked precipitation curtains descending directly from the cloud base
+ * to the terrain strictly over active Rain Radar echoes.
  */
-export const RainShaftShader = {
+export const RainShaftCurtainShader = {
   uniforms: {
     uTime: { value: 0 },
-    uRainIntensity: { value: 0.85 },
-    uWindAngle: { value: 0.15 },
-    uColor: { value: new THREE.Color(0.6, 0.68, 0.76) }
+    uWeatherData: { value: null as THREE.Texture | null },
+    uCloudBaseY: { value: 1900.0 },
+    uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
+    uWindSpeed: { value: 0.8 }
   },
+
   vertexShader: `
+    precision highp float;
+
+    uniform float uTime;
+    uniform sampler2D uWeatherData;
+    uniform float uCloudBaseY;
+    uniform vec2 uWindDir;
+    uniform float uWindSpeed;
+
+    attribute vec3 aShaftOrigin; // x, z = world center of radar cell; y = rotation angle
+    attribute float aShaftWidth;
+
     varying vec2 vUv;
-    varying vec3 vWorldPos;
-    uniform float uWindAngle;
+    varying float vRainIntensity;
 
     void main() {
       vUv = uv;
-      vec3 pos = position;
-      // Angle the rain shaft with the wind as it nears the ground
-      pos.x += (1.0 - uv.y) * 400.0 * uWindAngle;
-      vec4 wp = modelMatrix * vec4(pos, 1.0);
-      vWorldPos = wp.xyz;
-      gl_Position = projectionMatrix * viewMatrix * wp;
+
+      vec2 dynamicDrift = uWindDir * (uTime * uWindSpeed * 3.5);
+      vec2 centerXZ = aShaftOrigin.xz + dynamicDrift;
+
+      vec2 satUv = clamp(vec2(
+        (aShaftOrigin.x + 120000.0) / 240000.0,
+        (aShaftOrigin.z + 80000.0) / 160000.0
+      ), 0.002, 0.998);
+
+      vec4 w = texture2D(uWeatherData, satUv);
+      float cloudVal = w.r;
+      float rainVal = w.g;
+      vRainIntensity = rainVal;
+
+      if (rainVal < 0.04 || cloudVal < 0.12) {
+        gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+        return;
+      }
+
+      float topY = uCloudBaseY + 260.0;
+      float bottomY = 240.0;
+      float worldY = mix(bottomY, topY, uv.y);
+
+      float angle = aShaftOrigin.y;
+      vec2 horizDir = vec2(cos(angle), sin(angle));
+      float halfW = aShaftWidth * 0.5;
+      vec2 slant = uWindDir * ((1.0 - uv.y) * 220.0 * uWindSpeed);
+
+      vec3 worldPos = vec3(
+        centerXZ.x + horizDir.x * (uv.x - 0.5) * aShaftWidth + slant.x,
+        worldY,
+        centerXZ.y + horizDir.y * (uv.x - 0.5) * aShaftWidth + slant.y
+      );
+
+      gl_Position = projectionMatrix * viewMatrix * vec4(worldPos, 1.0);
     }
   `,
-  fragmentShader: `
-    uniform float uTime;
-    uniform float uRainIntensity;
-    uniform vec3 uColor;
-    varying vec2 vUv;
-    varying vec3 vWorldPos;
 
-    float hash(float n) { return fract(sin(n) * 43758.5453); }
+  fragmentShader: `
+    precision highp float;
+
+    uniform float uTime;
+    varying vec2 vUv;
+    varying float vRainIntensity;
+
+    float hash11(float p) {
+      p = fract(p * 0.1031);
+      p *= p + 33.33;
+      p *= p + p;
+      return fract(p);
+    }
 
     void main() {
-      // Vertical rain streaks moving downwards
-      float streakCoord = vUv.x * 60.0 + vWorldPos.z * 0.005;
-      float speed = uTime * 4.0;
-      float streaks = sin((vUv.y * 30.0 + speed) * 3.14159) * 0.5 + 0.5;
-      float noise = fract(sin(floor(streakCoord)) * 43758.5453);
-      streaks *= step(0.4, noise);
+      if (vRainIntensity < 0.04) discard;
 
-      // Vertical fade: dense at cloud bottom, mist at ground
-      float verticalFade = smoothstep(0.0, 0.25, vUv.y) * smoothstep(1.0, 0.7, vUv.y);
-      // Horizontal soft falloff
-      float edgeFade = smoothstep(0.0, 0.25, vUv.x) * smoothstep(1.0, 0.75, vUv.x);
+      // Soft horizontal & vertical feathering so the rain shaft merges seamlessly into the cloud base
+      float horizFade = smoothstep(0.0, 0.28, vUv.x) * smoothstep(1.0, 0.72, vUv.x);
+      float vertFade  = smoothstep(0.0, 0.22, vUv.y) * smoothstep(1.0, 0.82, vUv.y);
 
-      float alpha = (0.2 + streaks * 0.35) * verticalFade * edgeFade * uRainIntensity;
-      if (alpha < 0.01) discard;
+      // Animated downward rain-curtain fibrous streaks
+      float colId = floor(vUv.x * 28.0);
+      float streakWave = 0.5 + 0.5 * sin((vUv.y * 22.0 + uTime * 5.5 + hash11(colId) * 6.28));
+      float curtain = mix(0.55, 1.0, streakWave) * horizFade * vertFade;
 
-      gl_FragColor = vec4(uColor, alpha * 0.45);
+      float alpha = curtain * clamp(vRainIntensity * 0.26, 0.0, 0.22);
+      if (alpha < 0.004) discard;
+
+      vec3 shaftColor = mix(vec3(0.64, 0.75, 0.88), vec3(0.78, 0.87, 0.96), vUv.y);
+      gl_FragColor = vec4(shaftColor, alpha);
     }
   `
 };

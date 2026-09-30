@@ -33,12 +33,12 @@ export interface CloudClassification {
 export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification> = {
   cumulus_humilis: {
     type: 'cumulus_humilis',
-    displayName: 'Cumulus Humilis (Connected Fair-Weather Cloud Decks)',
+    displayName: 'Low-Level Cumulus & Stratocumulus (Surface to 6,500 ft AGL)',
     emoji: '☁️',
-    description: 'Flat-bottomed cumulus formations and connected decks with rounded billowy dome tops matching satellite coverage.',
-    baseAltitudeM: 4400,
-    topAltitudeM: 6400,
-    thicknessM: 2000,
+    description: 'Low-level stratus sheets, cellular stratocumulus blankets, and lumpy thermal cumulus clouds above valleys and ridges.',
+    baseAltitudeM: 3300,
+    topAltitudeM: 4900,
+    thicknessM: 1600,
     worleyFrequency: 0.00045,
     puffyFactor: 0.88,
     flatBaseSharpness: 0.16,
@@ -49,12 +49,12 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
   },
   cumulus_congestus: {
     type: 'cumulus_congestus',
-    displayName: 'Cumulus Congestus (Towering Cumulus & Connected Formations)',
+    displayName: 'Low/Mid Cumulus & Mountain Gravity Waves',
     emoji: '☁️',
-    description: 'Vast connected cloud formations and towering cumulus columns sculpted directly from NASA satellite passes.',
-    baseAltitudeM: 4400,
-    topAltitudeM: 7400,
-    thicknessM: 3000,
+    description: 'Low-to-mid level cumulus clusters, altocumulus sheets, and parallel orographic gravity-wave bands.',
+    baseAltitudeM: 3400,
+    topAltitudeM: 5500,
+    thicknessM: 2100,
     worleyFrequency: 0.00038,
     puffyFactor: 0.88,
     flatBaseSharpness: 0.18,
@@ -65,12 +65,12 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
   },
   cumulonimbus: {
     type: 'cumulonimbus',
-    displayName: 'Cumulonimbus (Massive Storm Systems & Convective Shields)',
+    displayName: 'Vertically Developed Cumulonimbus (Storm Towers & Anvils)',
     emoji: '⛈️',
-    description: 'Vast connected storm shields and towering deep convective columns across Kurdistan mountain ranges.',
-    baseAltitudeM: 4200,
-    topAltitudeM: 9600,
-    thicknessM: 5400,
+    description: 'Deep convective storm clusters rising from dark rain bases to high anvil tops with heavy radar precipitation.',
+    baseAltitudeM: 3100,
+    topAltitudeM: 6800,
+    thicknessM: 3700,
     worleyFrequency: 0.00032,
     puffyFactor: 0.90,
     flatBaseSharpness: 0.20,
@@ -81,12 +81,12 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
   },
   altocumulus: {
     type: 'altocumulus',
-    displayName: 'Altocumulus (Stratified Cloud Sheets)',
+    displayName: 'Mid-Level Altocumulus / Altostratus (6,500 to 20,000 ft)',
     emoji: '☁️',
-    description: 'Mid-troposphere rolls and expansive stratified cloud sheets.',
-    baseAltitudeM: 5200,
-    topAltitudeM: 7200,
-    thicknessM: 2000,
+    description: 'Patchy, ribbed, or continuous semi-transparent mid-level layers and mountain wave ripples.',
+    baseAltitudeM: 3600,
+    topAltitudeM: 5400,
+    thicknessM: 1800,
     worleyFrequency: 0.00055,
     puffyFactor: 0.75,
     flatBaseSharpness: 0.18,
@@ -97,12 +97,12 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
   },
   cirrus: {
     type: 'cirrus',
-    displayName: 'Cirrus (High Wispy Ice Veil)',
+    displayName: 'High-Level Cirrus / Cirrostratus (Thin Ice Filaments)',
     emoji: '🌤️',
-    description: 'High-altitude fibrous ice crystals and wispy streaks trailing across the sky.',
-    baseAltitudeM: 7400,
-    topAltitudeM: 9200,
-    thicknessM: 1800,
+    description: 'Thin, wispy, semi-transparent ice-crystal streaks where ground features remain visible beneath them.',
+    baseAltitudeM: 4200,
+    topAltitudeM: 5800,
+    thicknessM: 1600,
     worleyFrequency: 0.00028,
     puffyFactor: 0.45,
     flatBaseSharpness: 0.22,
@@ -113,12 +113,12 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
   },
   clear_sky: {
     type: 'clear_sky',
-    displayName: 'Clear Sky (Isolated Mountain Thermal Puffs)',
+    displayName: 'Clear Sky (Isolated Low Thermal Puffs)',
     emoji: '☀️',
-    description: 'Pristine atmosphere with occasional thermal puffs on high peaks.',
-    baseAltitudeM: 4600,
-    topAltitudeM: 6200,
-    thicknessM: 1600,
+    description: 'Clear atmosphere with occasional low-level thermal puffs.',
+    baseAltitudeM: 3300,
+    topAltitudeM: 4700,
+    thicknessM: 1400,
     worleyFrequency: 0.00050,
     puffyFactor: 0.65,
     flatBaseSharpness: 0.15,
@@ -130,14 +130,14 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
 };
 
 /**
- * Computes the real meteorological Cloud Base Altitude (Lifting Condensation Level - LCL)
- * from live station temperature and relative humidity using Espy's / WMO equation:
- *   LCL_AGL (m) = 125 * (T - T_dew)
- * Combined with the regional mountain elevation baseline so clouds always sit above the Zagros peaks.
+ * Computes the meteorologically & topographically accurate Cloud Base Altitude in 3D scene meters.
+ * Accounts for the 1.35x terrain relief scale over Kurdistan's valleys (~1,100m-2,200m scaled) and
+ * Zagros ridges (~2,700m-3,400m scaled) so Low/Mid clouds sit ~1,200m-1,800m AGL (~4,000-6,000 ft AGL)
+ * cleanly above the ridges without clipping into mountains or floating too high.
  */
 export function computeRealCloudBaseMeters(weatherPayload?: SulaymaniyahWeatherPayload | null): number {
   if (!weatherPayload?.stations || weatherPayload.stations.length === 0) {
-    return 4500;
+    return 3400;
   }
   const stations = weatherPayload.stations;
   const avgTemp = stations.reduce((acc, s) => acc + (s.temperature ?? 24), 0) / stations.length;
@@ -147,11 +147,10 @@ export function computeRealCloudBaseMeters(weatherPayload?: SulaymaniyahWeatherP
   const alpha = (17.27 * avgTemp) / (237.7 + avgTemp) + Math.log(avgRh / 100.0);
   const dewPoint = (237.7 * alpha) / (17.27 - alpha);
 
-  // Espy's LCL formula: 125m per 1°C of temperature-dewpoint spread
-  const lclAgl = Math.max(1200, Math.min(3400, 125.0 * Math.max(0, avgTemp - dewPoint)));
+  // LCL spread above the 1.35x scaled Kurdistan foothill/ridge baseline (2,650m)
+  const lclOffset = Math.max(550, Math.min(1150, 50.0 * Math.max(0, avgTemp - dewPoint)));
 
-  // Add Kurdistan regional mountain plateau + Zagros clearance baseline (~2200m)
-  return Math.round(Math.max(4200, Math.min(5600, 2200 + lclAgl)));
+  return Math.round(Math.max(3100, Math.min(3800, 2650 + lclOffset)));
 }
 
 /**

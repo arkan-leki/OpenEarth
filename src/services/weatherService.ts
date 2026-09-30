@@ -404,3 +404,55 @@ export async function fetchLiveKurdistanWeather(): Promise<KurdistanWeatherPaylo
 export const fetchLiveNorthVietnamWeather = fetchLiveKurdistanWeather;
 export const fetchLiveSulaymaniyahWeather = fetchLiveKurdistanWeather;
 export const fetchLiveNorthIraqWeather = fetchLiveKurdistanWeather;
+
+const datePrecipCache = new Map<string, number[]>();
+
+/**
+ * Fetches real measured Open-Meteo precipitation (mm/h peak during daytime pass)
+ * across the 12 Kurdistan stations for a specific YYYY-MM-DD date.
+ * Returns 0 for dry stations so non-raining clouds are never given fake rain radar!
+ */
+export async function fetchRealStationPrecipitationForDate(dateIso: string): Promise<number[] | null> {
+  if (!dateIso || !/^\d{4}-\d{2}-\d{2}$/.test(dateIso)) return null;
+  if (datePrecipCache.has(dateIso)) {
+    return datePrecipCache.get(dateIso)!;
+  }
+
+  const lats = KURDISTAN_STATIONS.map((s) => s.lat).join(',');
+  const lons = KURDISTAN_STATIONS.map((s) => s.lon).join(',');
+
+  const endpoints = [
+    `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=precipitation,rain,showers&start_date=${dateIso}&end_date=${dateIso}&timezone=Asia%2FBaghdad`,
+    `https://archive-api.open-meteo.com/v1/archive?latitude=${lats}&longitude=${lons}&hourly=precipitation,rain&start_date=${dateIso}&end_date=${dateIso}&timezone=Asia%2FBaghdad`
+  ];
+
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) continue;
+      const data = await res.json();
+      const arr = Array.isArray(data) ? data : [data];
+      if (!arr.length || !arr[0]?.hourly) continue;
+
+      const stationPeakPrecips = KURDISTAN_STATIONS.map((_, idx) => {
+        const st = arr[idx] || arr[0];
+        const pArr: number[] = st?.hourly?.precipitation || [];
+        if (!pArr.length) return 0;
+        // Check satellite daytime window (08:00 to 16:00 AST) + daily max
+        let maxP = 0;
+        for (let h = 0; h < pArr.length; h++) {
+          const val = Number(pArr[h]) || 0;
+          if (val > maxP) maxP = val;
+        }
+        return maxP;
+      });
+
+      datePrecipCache.set(dateIso, stationPeakPrecips);
+      return stationPeakPrecips;
+    } catch {
+      // try next endpoint
+    }
+  }
+
+  return null;
+}

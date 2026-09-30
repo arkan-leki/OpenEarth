@@ -1,8 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { Globe, MapPin, ChevronDown, Check, Layers, Calendar, Radio, Sparkles, Sun, Wind } from 'lucide-react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { Globe, MapPin, ChevronDown, ChevronLeft, ChevronRight, Check, Layers, Calendar, Radio, Sparkles, Sun, Wind } from 'lucide-react';
 import { KURDISTAN_LANDMARKS } from '../utils/realSulaymaniyahTerrain';
 import { Landmark } from '../types';
-import { SatelliteSourceMode } from '../services/liveSatelliteService';
+import { SatelliteSourceMode, getTodayDateIso, LOCAL_NASA_HISTORY_DATES } from '../services/liveSatelliteService';
 import { getNowInKurdistan } from '../utils/sunPosition';
 
 interface ZoomEarthTopBarProps {
@@ -15,6 +15,7 @@ interface ZoomEarthTopBarProps {
   satelliteMode?: SatelliteSourceMode;
   onChangeSatelliteMode?: (mode: SatelliteSourceMode) => void;
   satelliteDate?: string;
+  onSelectSatelliteDate?: (dateIso: string) => void;
   satelliteCloudCoveragePct?: number;
   isSatelliteCloudLoading?: boolean;
   isTodayPending?: boolean;
@@ -36,6 +37,7 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
   satelliteMode = 'nasa_today',
   onChangeSatelliteMode,
   satelliteDate = new Date().toISOString().slice(0, 10),
+  onSelectSatelliteDate,
   satelliteCloudCoveragePct,
   isSatelliteCloudLoading = false,
   isTodayPending = false,
@@ -47,7 +49,49 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
   metroWindDirDeg
 }) => {
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const datePickerRef = useRef<HTMLDivElement>(null);
+
+  const todayIso = useMemo(() => getTodayDateIso(0), []);
+  const yesterdayIso = useMemo(() => getTodayDateIso(-1), []);
+
+  // Generate recent 10 days + confirmed Kurdistan archive dates for quick 1-click selection
+  const quickDates = useMemo(() => {
+    const list: Array<{ iso: string; label: string; tag: string }> = [];
+    for (let i = 0; i <= 9; i++) {
+      const iso = getTodayDateIso(-i);
+      const [y, m, d] = iso.split('-').map(Number);
+      const dt = new Date(y, m - 1, d);
+      const shortStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      const dayName = dt.toLocaleDateString('en-US', { weekday: 'short' });
+      list.push({
+        iso,
+        label: `${dayName}, ${shortStr}`,
+        tag: i === 0 ? 'TODAY' : i === 1 ? 'YESTERDAY' : `-${i}d`
+      });
+    }
+    return list;
+  }, []);
+
+  const stepSatelliteDay = (deltaDays: number) => {
+    if (!onSelectSatelliteDate) return;
+    const [y, m, d] = satelliteDate.split('-').map(Number);
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    dt.setUTCDate(dt.getUTCDate() + deltaDays);
+    const nextIso = dt.toISOString().slice(0, 10);
+    if (nextIso > todayIso) return;
+    onSelectSatelliteDate(nextIso);
+  };
+
+  const formattedSelectedSatDate = useMemo(() => {
+    if (!satelliteDate) return 'Today';
+    if (satelliteDate === todayIso && satelliteMode === 'nasa_today') return 'Today Sat';
+    if (satelliteDate === yesterdayIso && satelliteMode === 'nasa_yesterday') return 'Yesterday';
+    const [y, m, d] = satelliteDate.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }, [satelliteDate, todayIso, yesterdayIso, satelliteMode]);
 
   // Live ticking clock in Kurdistan AST (UTC+3) time
   const [liveDate, setLiveDate] = useState<Date>(() => getNowInKurdistan());
@@ -59,11 +103,14 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
     return () => clearInterval(timer);
   }, []);
 
-  // Close dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setDropdownOpen(false);
+      }
+      if (datePickerRef.current && !datePickerRef.current.contains(event.target as Node)) {
+        setDatePickerOpen(false);
       }
     }
     document.addEventListener('mousedown', handleClickOutside);
@@ -191,6 +238,154 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
               <span className="w-1.5 h-1.5 rounded-full bg-indigo-300 animate-ping" />
             )}
           </button>
+
+          {/* Interactive Any-Date Selector & Day-by-Day Stepper (< Date >) */}
+          {onSelectSatelliteDate && (
+            <div className="relative flex items-center" ref={datePickerRef}>
+              <div
+                className={`flex items-center rounded-xl border transition-all ${
+                  satelliteDate !== todayIso && satelliteDate !== yesterdayIso && (satelliteMode === 'nasa_today' || satelliteMode === 'nasa_yesterday')
+                    ? 'bg-gradient-to-r from-violet-600 to-fuchsia-600 text-white font-bold border-violet-300/50 shadow-md shadow-violet-500/30'
+                    : 'bg-slate-900/90 border-slate-700/80 text-slate-200 hover:border-cyan-400/50'
+                }`}
+              >
+                <button
+                  id="btn-prev-sat-day"
+                  onClick={() => stepSatelliteDay(-1)}
+                  className="px-1.5 py-1.5 hover:bg-white/10 rounded-l-xl text-slate-300 hover:text-white transition-colors cursor-pointer"
+                  title="Previous Day Satellite Pass (-1 Day)"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  id="btn-open-date-picker"
+                  onClick={() => setDatePickerOpen((prev) => !prev)}
+                  className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] sm:text-xs font-mono cursor-pointer hover:bg-white/5"
+                  title="Select any historical date to render NASA Satellite Clouds & Weather"
+                >
+                  <Calendar className="w-3.5 h-3.5 text-cyan-300 shrink-0" />
+                  <span>{ satelliteDate }</span>
+                  {satelliteDate !== todayIso &&
+                    satelliteDate !== yesterdayIso &&
+                    satelliteCloudCoveragePct !== undefined && (
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-fuchsia-200 font-bold border border-fuchsia-300/30">
+                        {satelliteCloudCoveragePct}%
+                      </span>
+                    )}
+                  <ChevronDown className={`w-3 h-3 opacity-75 transition-transform ${datePickerOpen ? 'rotate-180' : ''}`} />
+                </button>
+
+                <button
+                  id="btn-next-sat-day"
+                  onClick={() => stepSatelliteDay(1)}
+                  disabled={satelliteDate >= todayIso}
+                  className={`px-1.5 py-1.5 rounded-r-xl transition-colors ${
+                    satelliteDate >= todayIso
+                      ? 'text-slate-600 cursor-not-allowed'
+                      : 'hover:bg-white/10 text-slate-300 hover:text-white cursor-pointer'
+                  }`}
+                  title="Next Day Satellite Pass (+1 Day)"
+                >
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Dropdown Calendar & Historical Pass Selector */}
+              {datePickerOpen && (
+                <div className="absolute top-full mt-2 left-0 sm:left-auto sm:right-0 w-72 bg-slate-950/95 backdrop-blur-2xl border border-slate-700/90 rounded-2xl shadow-2xl p-3 z-50 text-left">
+                  <div className="flex items-center justify-between mb-2 pb-1.5 border-b border-slate-800">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-400">
+                      Select Satellite Pass Date
+                    </span>
+                    <span className="text-[10px] text-slate-400 font-mono">
+                      {formattedSelectedSatDate}
+                    </span>
+                  </div>
+
+                  {/* Custom Calendar Date Input */}
+                  <div className="mb-3">
+                    <label className="block text-[10px] text-slate-400 mb-1">
+                      Pick Any Custom Date (NASA GIBS Archive):
+                    </label>
+                    <input
+                      type="date"
+                      value={satelliteDate}
+                      max={todayIso}
+                      min="2012-01-01"
+                      onChange={(e) => {
+                        if (e.target.value) {
+                          onSelectSatelliteDate(e.target.value);
+                          setDatePickerOpen(false);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-700 hover:border-cyan-400/60 focus:border-cyan-400 rounded-xl px-2.5 py-1.5 text-xs text-white font-mono outline-none cursor-pointer"
+                    />
+                  </div>
+
+                  {/* Quick Recent 10 Days */}
+                  <div className="mb-2.5">
+                    <div className="text-[10px] text-slate-400 mb-1 font-semibold">
+                      Recent Daily Passes:
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 max-h-36 overflow-y-auto pr-0.5">
+                      {quickDates.map((item) => {
+                        const active = satelliteDate === item.iso;
+                        return (
+                          <button
+                            key={item.iso}
+                            onClick={() => {
+                              onSelectSatelliteDate(item.iso);
+                              setDatePickerOpen(false);
+                            }}
+                            className={`flex items-center justify-between px-2 py-1.5 rounded-lg text-[10px] font-mono transition-all cursor-pointer border ${
+                              active
+                                ? 'bg-cyan-500/25 border-cyan-400 text-white font-bold'
+                                : 'bg-slate-900/70 border-slate-800/80 text-slate-300 hover:bg-slate-800 hover:text-white'
+                            }`}
+                          >
+                            <span className="truncate">{item.label}</span>
+                            <span className="text-[9px] px-1 rounded bg-black/40 text-cyan-300 ml-1 shrink-0">
+                              {item.tag}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Pre-Verified Kurdistan Cloud Archive Passes */}
+                  <div>
+                    <div className="text-[10px] text-slate-400 mb-1 font-semibold">
+                      Confirmed Kurdistan Cloud Passes:
+                    </div>
+                    <div className="grid grid-cols-2 gap-1 max-h-28 overflow-y-auto pr-0.5">
+                      {LOCAL_NASA_HISTORY_DATES.map((iso) => {
+                        const active = satelliteDate === iso;
+                        return (
+                          <button
+                            key={iso}
+                            onClick={() => {
+                              onSelectSatelliteDate(iso);
+                              setDatePickerOpen(false);
+                            }}
+                            className={`flex items-center justify-between px-2 py-1 rounded-lg text-[10px] font-mono transition-all cursor-pointer border ${
+                              active
+                                ? 'bg-indigo-500/30 border-indigo-400 text-white font-bold'
+                                : 'bg-slate-900/60 border-slate-800/80 text-slate-300 hover:bg-slate-800 hover:text-white'
+                            }`}
+                          >
+                            <span>{iso}</span>
+                            {active && <Check className="w-3 h-3 text-indigo-300" />}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Clean HD Base Terrain */}
           <button

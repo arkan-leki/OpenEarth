@@ -14,7 +14,11 @@ import {
   loadRobustSatelliteImage,
   isBlankSatelliteImage
 } from './liveSatelliteService';
-import { NorthVietnamWeatherPayload, KURDISTAN_STATIONS } from './weatherService';
+import {
+  NorthVietnamWeatherPayload,
+  KURDISTAN_STATIONS,
+  fetchRealStationPrecipitationForDate
+} from './weatherService';
 import {
   MIN_LON,
   MAX_LON,
@@ -195,7 +199,8 @@ export function extractCloudsFromSatelliteImage(
   targetHeight = EXTRACT_RES,
   refGround?: ReferenceGroundData | null,
   precomputedMaskImage?: HTMLImageElement | null,
-  secondaryCloudImage?: HTMLImageElement | null
+  secondaryCloudImage?: HTMLImageElement | null,
+  dateStationPrecip?: number[] | null
 ): {
   weatherDataTexture: THREE.DataTexture;
   cloudDeckTexture: THREE.CanvasTexture;
@@ -503,20 +508,52 @@ export function extractCloudsFromSatelliteImage(
       const elevM = sampleRealElevationAtLonLat(lon, lat);
       const localTempC = avgTemp - Math.max(0, elevM - 500) * 0.0065;
 
-      // 2. STRICT RAIN DETECTION (ONLY if it is actually raining!)
+      // 2. REAL RAIN RADAR & MEASURED STATION PRECIPITATION ONLY (Zero fake rain on dry clouds!)
+      // Strictly uses:
+      // (a) Real RainViewer Doppler Radar echoes (radarData)
+      // (b) Real Open-Meteo measured precipitation (mm/h) localized to the reporting station
       let rainVal = 0;
       if (radarData) {
         const rAlpha = radarData[i + 3];
-        if (rAlpha > 40) {
+        if (rAlpha > 25) {
           const rGreen = radarData[i + 1];
-          rainVal = Math.min(255, Math.round((rAlpha / 255.0) * Math.max(130, rGreen)));
-          cloudVal = Math.max(cloudVal, Math.min(255, 160 + Math.round(rainVal * 0.35)));
-          cloudAlbedo = Math.max(cloudAlbedo, 210);
+          const rRed = radarData[i];
+          rainVal = Math.min(255, Math.round((rAlpha / 255.0) * Math.max(115, Math.max(rGreen, rRed))));
+          // Ensure a 3D rain-bearing cloud sits directly above every real radar echo
+          cloudVal = Math.max(cloudVal, Math.min(255, 145 + Math.round(rainVal * 0.40)));
+          cloudAlbedo = Math.max(cloudAlbedo, 195);
         }
       }
-      if (maxStationPrecip > 0.15 && cloudVal > 110) {
-        const stRain = Math.min(255, Math.round((maxStationPrecip / 6.0) * 220));
-        rainVal = Math.max(rainVal, Math.round(stRain * (cloudVal / 255.0)));
+
+      // Check real local Open-Meteo station precipitation (only within ~35km of a station reporting rain)
+      if (cloudVal >= 80) {
+        let localPrecipMm = 0;
+        let wSum = 0;
+        for (let sIdx = 0; sIdx < KURDISTAN_STATIONS.length; sIdx++) {
+          const stMeta = KURDISTAN_STATIONS[sIdx];
+          const stPrecip =
+            dateStationPrecip && dateStationPrecip[sIdx] !== undefined
+              ? dateStationPrecip[sIdx]
+              : (stations[sIdx]?.precipitation ?? 0);
+
+          if (stPrecip >= 0.12) {
+            const dLon = lon - stMeta.lon;
+            const dLat = lat - stMeta.lat;
+            const distSq = dLon * dLon + dLat * dLat;
+            if (distSq < 0.14) {
+              const w = 1.0 / (distSq + 0.006);
+              localPrecipMm += stPrecip * w;
+              wSum += w;
+            }
+          }
+        }
+        if (wSum > 0) {
+          const avgLocalPrecip = localPrecipMm / wSum;
+          if (avgLocalPrecip >= 0.12) {
+            const stRain = Math.min(245, Math.round((avgLocalPrecip / 4.5) * 215));
+            rainVal = Math.max(rainVal, Math.round(stRain * (cloudVal / 255.0)));
+          }
+        }
       }
 
       // 3. GROUND SNOW COVER (Strictly when freezing & bright snow albedo is present)
@@ -647,7 +684,13 @@ export function extractCloudsFromSatelliteImage(
       const elevM = sampleRealElevationAtLonLat(lon, lat);
       const localTempC = avgTemp - Math.max(0, elevM - 500) * 0.0065;
 
+      // Ensure rain only occurs where real Rain Radar / Open-Meteo precipitation exists AND a cloud sits above it
       const finalRain = rawRain[p];
+      if (finalRain > 12 && finalCloud < 90) {
+        finalCloud = Math.max(finalCloud, Math.min(255, 115 + Math.round(finalRain * 0.42)));
+        finalAlbedo = Math.max(finalAlbedo, finalCloud);
+      }
+
       const finalSnowCover = rawSnowCover[p];
       const finalFog = rawFog[p];
       const finalDust = rawDust[p];
@@ -659,7 +702,7 @@ export function extractCloudsFromSatelliteImage(
       if (finalSnowCover > 30) snowPixelCount++;
       if (finalFog > 25) fogPixelCount++;
       if (finalDust > 25) dustPixelCount++;
-      if (finalRain > 25) {
+      if (finalRain > 12) {
         if (localTempC <= 2.5) {
           fallingSnowPixelCount++;
         } else {
@@ -944,13 +987,14 @@ export function buildCombinedLiveWeatherAndCloudTexture(
       );
 
       const stationRainByte =
-        weightedPrecip > 0.12 && finalCloud > 90
-          ? Math.min(255, Math.round(((weightedPrecip - 0.1) / 5.5) * 255))
+        weightedPrecip >= 0.12 && finalCloud > 75
+          ? Math.min(255, Math.round(((weightedPrecip - 0.08) / 5.0) * 255))
           : 0;
+      // Strictly use real RainViewer Doppler Radar + real Open-Meteo station precipitation (zero fake cloud rain)
       const finalRain = Math.max(radarRain, stationRainByte);
 
       if (finalCloud > 25) cloudPixels++;
-      if (finalRain > 25) precipPixels++;
+      if (finalRain > 12) precipPixels++;
 
       data[idx] = finalCloud;
       data[idx + 1] = finalRain;
@@ -1030,13 +1074,21 @@ export async function loadLiveSatelliteCloudPass(
   sensor = 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
   weatherPayload?: NorthVietnamWeatherPayload | null
 ): Promise<SatelliteCloudAnalysis | null> {
-  const cacheKey = `${sensor}_${date}_1024_v4_feathered`;
+  const cacheKey = `${sensor}_${date}_1024_v6_real_radar_only`;
   if (cloudAnalysisCache.has(cacheKey)) {
     return cloudAnalysisCache.get(cacheKey)!;
   }
 
   try {
     await loadRealDemData();
+
+    let radarCanvas: HTMLCanvasElement | null = null;
+    if (date === getTodayDateIso(0)) {
+      const radarMeta = await fetchRainViewerMetadata();
+      if (radarMeta) {
+        radarCanvas = await createRainViewerRadarCanvas(radarMeta);
+      }
+    }
 
     // 1. Resolve the verified, non-white-filtered NASA pass for the requested date
     const [satResult, refGround] = await Promise.all([
@@ -1045,6 +1097,9 @@ export async function loadLiveSatelliteCloudPass(
     ]);
 
     const satImg = satResult.image;
+
+    // Fetch real measured Open-Meteo precipitation for the actual satellite pass date
+    const dateStationPrecip = await fetchRealStationPrecipitationForDate(satResult.actualDate);
 
     let preMaskImg: HTMLImageElement | null = null;
     const matchHistory = satResult.src.match(/\/tiles\/nasa_history\/(\d{4}-\d{2}-\d{2})\.jpg/);
@@ -1055,12 +1110,13 @@ export async function loadLiveSatelliteCloudPass(
     const result = extractCloudsFromSatelliteImage(
       satImg,
       weatherPayload,
-      null,
+      radarCanvas,
       EXTRACT_RES,
       EXTRACT_RES,
       refGround,
       preMaskImg,
-      null
+      null,
+      dateStationPrecip
     );
 
     const analysis: SatelliteCloudAnalysis = {

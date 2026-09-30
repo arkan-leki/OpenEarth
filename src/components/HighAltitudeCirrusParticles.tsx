@@ -2,122 +2,147 @@ import React, { useMemo, useRef, useEffect } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import gsap from 'gsap';
-import { CirrusParticleShader } from '../shaders/cirrusParticleShader';
+import { ClusteredCumulusBillboardShader } from '../shaders/cirrusParticleShader';
 import { SunPositionResult } from '../utils/sunPosition';
 
 interface HighAltitudeCirrusParticlesProps {
   weatherTexture: THREE.Texture;
   sunPosition?: SunPositionResult;
   windSpeed?: number;
+  cloudBaseY?: number;
   visible?: boolean;
 }
 
+const MAX_CUMULUS_PUFFS = 900;
+
 /**
- * Hybrid Particle-Shader System for High-Altitude Cirrus Clouds (8,200m - 10,800m MSL).
+ * Clustered Cumulus Particle Billboards (Strategy 3)
  *
- * Uses 1,600 instanced anisotropic noise-sculpted cloud ribbons that advect independently
- * along the upper-tropospheric Subtropical Jet Stream vector (WSW -> ENE), moving at a
- * distinct speed and direction from the lower-level volumetric cumulus/cumulonimbus formations.
+ * Spawns THREE.InstancedMesh alpha-blended cumulus puffs strictly inside satellite-detected
+ * cumulus cores at the active `cloudBaseY` altitude (never slicing through mountains with
+ * flat planes and never floating at fake high altitudes).
  */
 export const HighAltitudeCirrusParticles: React.FC<HighAltitudeCirrusParticlesProps> = ({
   weatherTexture,
   sunPosition,
   windSpeed = 0.8,
+  cloudBaseY = 3400,
   visible = true
 }) => {
-  const shaderMatRef = useRef<THREE.ShaderMaterial>(null);
-  const prevTextureRef = useRef<THREE.Texture>(weatherTexture);
+  const puffMatRef = useRef<THREE.ShaderMaterial>(null);
+  const prevTexRef = useRef<THREE.Texture>(weatherTexture);
 
-  const instanceCount = 1600;
-
-  // Build instanced geometry for 1,600 high-altitude cirrus ribbon particles
-  const instancedGeometry = useMemo(() => {
+  const { puffGeometry, activePuffCount } = useMemo(() => {
     const baseQuad = new THREE.PlaneGeometry(1, 1, 1, 1);
-    const geo = new THREE.InstancedBufferGeometry();
-    geo.index = baseQuad.index;
-    geo.attributes.position = baseQuad.attributes.position;
-    geo.attributes.uv = baseQuad.attributes.uv;
+    const instGeo = new THREE.InstancedBufferGeometry();
+    instGeo.index = baseQuad.index;
+    instGeo.attributes.position = baseQuad.attributes.position;
+    instGeo.attributes.uv = baseQuad.attributes.uv;
 
-    const instancePositions = new Float32Array(instanceCount * 3);
-    const instanceScales = new Float32Array(instanceCount * 2);
-    const instanceSeeds = new Float32Array(instanceCount);
-    const instanceJetSpeeds = new Float32Array(instanceCount);
+    const origins = new Float32Array(MAX_CUMULUS_PUFFS * 3);
+    const scales = new Float32Array(MAX_CUMULUS_PUFFS * 2);
+    const seeds = new Float32Array(MAX_CUMULUS_PUFFS);
+    const heightNorms = new Float32Array(MAX_CUMULUS_PUFFS);
 
-    // Deterministic Halton-like stratified distribution across the 240km x 160km domain
-    for (let i = 0; i < instanceCount; i++) {
-      const r1 = ((i * 1.61803398875) % 1.0);
-      const r2 = ((i * 0.75487766624) % 1.0);
-      const r3 = ((i * 0.56984029099) % 1.0);
+    const dataTex = weatherTexture as THREE.DataTexture;
+    const raw = dataTex?.image?.data as Uint8Array | undefined;
+    const w = dataTex?.image?.width || 0;
+    const h = dataTex?.image?.height || 0;
 
-      // World X (-118km .. +118km), World Y (8,200m .. 10,800m), World Z (-78km .. +78km)
-      instancePositions[i * 3 + 0] = (r1 - 0.5) * 236000.0;
-      instancePositions[i * 3 + 1] = 8200.0 + r3 * 2600.0;
-      instancePositions[i * 3 + 2] = (r2 - 0.5) * 156000.0;
-
-      // Elongated ribbon scale along the jet-stream axis (9km - 22km long, 3.5km - 9km wide)
-      const lengthM = 9500.0 + ((i * 0.381966) % 1.0) * 13500.0;
-      const widthM = 3800.0 + ((i * 0.276393) % 1.0) * 5400.0;
-      instanceScales[i * 2 + 0] = lengthM;
-      instanceScales[i * 2 + 1] = widthM;
-
-      instanceSeeds[i] = (i * 0.1379) % 1.0;
-      instanceJetSpeeds[i] = 0.65 + r3 * 0.85; // higher cirrus filaments move faster in the jet core
+    const cloudCells: Array<{ u: number; v: number; strength: number }> = [];
+    if (raw && w > 0 && h > 0) {
+      const step = Math.max(2, Math.floor(w / 128));
+      for (let py = 2; py < h - 2; py += step) {
+        for (let px = 2; px < w - 2; px += step) {
+          const idx = (py * w + px) * 4;
+          const cR = raw[idx] / 255.0;
+          const cA = raw[idx + 3] / 255.0;
+          if (cR > 0.25 && cA > 0.30) {
+            cloudCells.push({
+              u: px / w,
+              v: py / h,
+              strength: Math.max(cR, cA)
+            });
+          }
+        }
+      }
     }
 
-    geo.setAttribute('aInstancePos', new THREE.InstancedBufferAttribute(instancePositions, 3));
-    geo.setAttribute('aScale', new THREE.InstancedBufferAttribute(instanceScales, 2));
-    geo.setAttribute('aSeed', new THREE.InstancedBufferAttribute(instanceSeeds, 1));
-    geo.setAttribute('aJetSpeedFactor', new THREE.InstancedBufferAttribute(instanceJetSpeeds, 1));
+    let count = 0;
+    if (cloudCells.length > 0) {
+      let s = 48271;
+      const nextRand = () => {
+        s = (s * 16807) % 2147483647;
+        return (s - 1) / 2147483646;
+      };
 
-    return geo;
-  }, [instanceCount]);
+      count = Math.min(MAX_CUMULUS_PUFFS, cloudCells.length * 2);
+      for (let i = 0; i < count; i++) {
+        const cell = cloudCells[(i * 7) % cloudCells.length];
+        const jitterX = (nextRand() - 0.5) * 2600;
+        const jitterZ = (nextRand() - 0.5) * 2600;
+        const hNorm = nextRand();
 
-  const uniforms = useMemo(() => {
-    return {
+        const worldX = cell.u * 240000 - 120000 + jitterX;
+        const worldZ = cell.v * 160000 - 80000 + jitterZ;
+        // Relative vertical offset above cloudBaseY (200m to 1,250m above base)
+        const relY = 200 + hNorm * (650 + cell.strength * 450);
+
+        origins[i * 3] = worldX;
+        origins[i * 3 + 1] = relY;
+        origins[i * 3 + 2] = worldZ;
+
+        const size = 3800 + nextRand() * 4200;
+        scales[i * 2] = size * 1.2;
+        scales[i * 2 + 1] = size * 0.82;
+
+        seeds[i] = nextRand();
+        heightNorms[i] = hNorm;
+      }
+    }
+
+    instGeo.setAttribute('aPuffOrigin', new THREE.InstancedBufferAttribute(origins, 3));
+    instGeo.setAttribute('aPuffScale', new THREE.InstancedBufferAttribute(scales, 2));
+    instGeo.setAttribute('aPuffSeed', new THREE.InstancedBufferAttribute(seeds, 1));
+    instGeo.setAttribute('aHeightNorm', new THREE.InstancedBufferAttribute(heightNorms, 1));
+    instGeo.instanceCount = count;
+
+    return { puffGeometry: instGeo, activePuffCount: count };
+  }, [weatherTexture]);
+
+  const puffUniforms = useMemo(
+    () => ({
       uTime: { value: 0 },
       uWeatherData: { value: weatherTexture },
       uTransitionProgress: { value: 1.0 },
       uSunDir: { value: new THREE.Vector3(0.55, 0.78, 0.28).normalize() },
       uSunColor: { value: new THREE.Color('#fffdf8') },
-      uSkyColor: { value: new THREE.Color('#60a5fa') },
-      // Independent Subtropical Jet Stream direction (WSW -> ENE, ~65 deg azimuth shear vs lower winds)
-      uJetStreamDir: { value: new THREE.Vector2(0.91, -0.41).normalize() },
-      uJetStreamSpeed: { value: 1.65 },
-      uOpacityMultiplier: { value: 0.58 }
-    };
-  }, []);
+      uSkyColor: { value: new THREE.Color('#476487') },
+      uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
+      uWindSpeed: { value: windSpeed }
+    }),
+    []
+  );
 
-  // Smooth GSAP transition when switching between Today, Yesterday, and Live modes
   useEffect(() => {
-    if (!shaderMatRef.current) return;
-    const mat = shaderMatRef.current;
-
-    if (prevTextureRef.current !== weatherTexture) {
-      mat.uniforms.uWeatherData.value = weatherTexture;
-      prevTextureRef.current = weatherTexture;
-
-      gsap.killTweensOf(mat.uniforms.uTransitionProgress);
+    if (prevTexRef.current !== weatherTexture && puffMatRef.current) {
+      prevTexRef.current = weatherTexture;
+      puffMatRef.current.uniforms.uWeatherData.value = weatherTexture;
+      gsap.killTweensOf(puffMatRef.current.uniforms.uTransitionProgress);
       gsap.fromTo(
-        mat.uniforms.uTransitionProgress,
+        puffMatRef.current.uniforms.uTransitionProgress,
         { value: 0.0 },
-        {
-          value: 1.0,
-          duration: 1.05,
-          ease: 'power2.out'
-        }
+        { value: 1.0, duration: 0.9, ease: 'power2.out' }
       );
     }
   }, [weatherTexture]);
 
   useFrame((state) => {
-    if (!shaderMatRef.current) return;
-    const mat = shaderMatRef.current;
-
+    const mat = puffMatRef.current;
+    if (!mat) return;
     mat.uniforms.uTime.value = state.clock.elapsedTime;
     mat.uniforms.uWeatherData.value = weatherTexture;
-    // Upper-level jet stream moves independently and faster than lower boundary-layer wind
-    mat.uniforms.uJetStreamSpeed.value = Math.max(1.1, (windSpeed || 0.8) * 1.95);
-
+    mat.uniforms.uWindSpeed.value = windSpeed;
     if (sunPosition) {
       mat.uniforms.uSunDir.value.copy(sunPosition.sunDirection);
       mat.uniforms.uSunColor.value.set(sunPosition.lightColor);
@@ -125,25 +150,21 @@ export const HighAltitudeCirrusParticles: React.FC<HighAltitudeCirrusParticlesPr
     }
   });
 
-  useEffect(() => {
-    return () => {
-      instancedGeometry.dispose();
-    };
-  }, [instancedGeometry]);
-
-  if (!visible) return null;
+  if (!visible || activePuffCount === 0) return null;
 
   return (
-    <mesh geometry={instancedGeometry} frustumCulled={false}>
-      <shaderMaterial
-        ref={shaderMatRef}
-        uniforms={uniforms}
-        vertexShader={CirrusParticleShader.vertexShader}
-        fragmentShader={CirrusParticleShader.fragmentShader}
-        transparent={true}
-        depthWrite={false}
-        side={THREE.DoubleSide}
-      />
-    </mesh>
+    <group position={[0, cloudBaseY, 0]}>
+      <mesh geometry={puffGeometry} frustumCulled={false}>
+        <shaderMaterial
+          ref={puffMatRef}
+          uniforms={puffUniforms}
+          vertexShader={ClusteredCumulusBillboardShader.vertexShader}
+          fragmentShader={ClusteredCumulusBillboardShader.fragmentShader}
+          transparent={true}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+    </group>
   );
 };

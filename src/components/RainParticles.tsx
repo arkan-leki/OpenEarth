@@ -1,7 +1,7 @@
 import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
-import { PrecipitationShader } from '../shaders/rainShader';
+import { RainStreakLineShader, RainShaftCurtainShader } from '../shaders/rainShader';
 
 interface RainParticlesProps {
   weatherTexture: THREE.Texture;
@@ -10,94 +10,211 @@ interface RainParticlesProps {
   activeMaxPrecipitation?: number;
   hasActivePrecipitation?: boolean;
   windSpeed?: number;
+  cloudBaseY?: number;
 }
 
+const MAX_RAIN_STREAKS = 28000;
+const MAX_RAIN_SHAFTS = 420;
+
+/**
+ * Renders 3D Falling Rain Streaks (THREE.LineSegments) and Sub-Cloud Volumetric Rain Shafts
+ * strictly emerging from the bottom of the 3D clouds (cloudBaseY) down to the terrain
+ * in the exact areas where the Rain Radar channel (weatherTexture.g > 0.04) shows rain.
+ */
 export const RainParticles: React.FC<RainParticlesProps> = ({
   weatherTexture,
-  rainThreshold = 0.18,
   snowTempThreshold = 2.5,
-  activeMaxPrecipitation = 0.0,
-  hasActivePrecipitation = false,
   windSpeed = 0.8,
+  cloudBaseY = 1900
 }) => {
-  const pointsRef = useRef<THREE.Points>(null);
-  const shaderMatRef = useRef<THREE.ShaderMaterial>(null);
+  const streakMatRef = useRef<THREE.ShaderMaterial>(null);
+  const shaftMatRef = useRef<THREE.ShaderMaterial>(null);
 
-  // Strictly only render rain or snow if it is actually raining/snowing
-  const hasPrecipitation = hasActivePrecipitation || activeMaxPrecipitation > 0.1;
+  // Extract all active Rain Radar cells (G > 10 and Cloud R > 30) directly from weatherTexture
+  // so 100% of rain streaks and rain shafts pour directly from the clouds over Rain Radar zones!
+  const { streakGeometry, shaftGeometry, hasRadarRainCells } = useMemo(() => {
+    const dataTex = weatherTexture as THREE.DataTexture;
+    const raw = dataTex?.image?.data as Uint8Array | undefined;
+    const w = dataTex?.image?.width || 0;
+    const h = dataTex?.image?.height || 0;
 
-  // Particle count (24000 points provides dense, realistic precipitation streaks across North Vietnam)
-  const particleCount = 24000;
-
-  const { geometry, uniforms } = useMemo(() => {
-    const geo = new THREE.BufferGeometry();
-    const positions = new Float32Array(particleCount * 3);
-    const seeds = new Float32Array(particleCount);
-    const speedOffsets = new Float32Array(particleCount);
-
-    // Box size: spans the full 240km x 160km North Vietnam domain
-    // Vertical span: 3200m from cloud base down towards mountain valleys and plains
-    const boxSize = [240000, 3200, 160000];
-
-    for (let i = 0; i < particleCount; i++) {
-      positions[i * 3] = (Math.random() - 0.5) * boxSize[0];
-      positions[i * 3 + 1] = Math.random() * boxSize[1];
-      positions[i * 3 + 2] = (Math.random() - 0.5) * boxSize[2];
-
-      seeds[i] = Math.random();
-      speedOffsets[i] = Math.random();
+    const radarCells: Array<{ u: number; v: number; rainNorm: number }> = [];
+    if (raw && w > 0 && h > 0) {
+      const step = Math.max(1, Math.floor(w / 256));
+      for (let py = 2; py < h - 2; py += step) {
+        for (let px = 2; px < w - 2; px += step) {
+          const idx = (py * w + px) * 4;
+          const cloudNorm = raw[idx] / 255.0;
+          const rainNorm = raw[idx + 1] / 255.0;
+          // Matches SatelliteMetViewerModal Rain Radar threshold (rainNorm > 0.04) + cloud overhead
+          if (rainNorm > 0.04 && cloudNorm > 0.12) {
+            radarCells.push({
+              u: px / w,
+              v: py / h,
+              rainNorm
+            });
+          }
+        }
+      }
     }
 
-    geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
-    geo.setAttribute('aSpeedOffset', new THREE.BufferAttribute(speedOffsets, 1));
+    if (radarCells.length === 0) {
+      return {
+        streakGeometry: new THREE.BufferGeometry(),
+        shaftGeometry: new THREE.InstancedBufferGeometry(),
+        hasRadarRainCells: false
+      };
+    }
 
-    const uni = {
-      uTime: { value: 0 },
-      uWeatherData: { value: weatherTexture },
-      uCameraPos: { value: new THREE.Vector3() },
-      uBoxSize: { value: new THREE.Vector3(boxSize[0], boxSize[1], boxSize[2]) },
-      uRainThreshold: { value: rainThreshold },
-      uSnowTempThreshold: { value: snowTempThreshold },
-      uFallSpeed: { value: 2400.0 },
-      uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
-      uPredictedOffset: { value: new THREE.Vector2(0.0, 0.0) },
-      uWindSpeed: { value: 0.8 },
-      uParticleScale: { value: 28.0 },
+    let seedState = 918273;
+    const nextRand = () => {
+      seedState = (seedState * 16807) % 2147483647;
+      return (seedState - 1) / 2147483646;
     };
 
-    return { geometry: geo, uniforms: uni };
-  }, [weatherTexture, rainThreshold, snowTempThreshold]);
+    // 1. Build 3D Rain Streak LineSegments (2 vertices per streak: top=0, bottom=1)
+    const activeStreaks = Math.min(MAX_RAIN_STREAKS, Math.max(4500, radarCells.length * 14));
+    const positions = new Float32Array(activeStreaks * 2 * 3);
+    const cloudOrigins = new Float32Array(activeStreaks * 2 * 3);
+    const vertexEnds = new Float32Array(activeStreaks * 2);
+    const seeds = new Float32Array(activeStreaks * 2);
+
+    const cellSpacingX = 240000 / Math.min(256, w);
+    const cellSpacingZ = 160000 / Math.min(256, h);
+
+    for (let i = 0; i < activeStreaks; i++) {
+      const cell = radarCells[(i * 13) % radarCells.length];
+      const worldX = cell.u * 240000 - 120000 + (nextRand() - 0.5) * cellSpacingX * 1.35;
+      const worldZ = cell.v * 160000 - 80000 + (nextRand() - 0.5) * cellSpacingZ * 1.35;
+      const phase = nextRand();
+      const sVal = nextRand();
+
+      const v0 = i * 2;
+      const v1 = i * 2 + 1;
+
+      cloudOrigins[v0 * 3] = worldX;
+      cloudOrigins[v0 * 3 + 1] = phase;
+      cloudOrigins[v0 * 3 + 2] = worldZ;
+
+      cloudOrigins[v1 * 3] = worldX;
+      cloudOrigins[v1 * 3 + 1] = phase;
+      cloudOrigins[v1 * 3 + 2] = worldZ;
+
+      vertexEnds[v0] = 0.0;
+      vertexEnds[v1] = 1.0;
+
+      seeds[v0] = sVal;
+      seeds[v1] = sVal;
+    }
+
+    const lineGeo = new THREE.BufferGeometry();
+    lineGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    lineGeo.setAttribute('aCloudOrigin', new THREE.BufferAttribute(cloudOrigins, 3));
+    lineGeo.setAttribute('aVertexEnd', new THREE.BufferAttribute(vertexEnds, 1));
+    lineGeo.setAttribute('aSeed', new THREE.BufferAttribute(seeds, 1));
+
+    // 2. Build Sub-Cloud Volumetric Rain Shaft Curtains directly beneath the Rain Radar clouds
+    const baseQuad = new THREE.PlaneGeometry(1, 1, 1, 1);
+    const shaftGeo = new THREE.InstancedBufferGeometry();
+    shaftGeo.index = baseQuad.index;
+    shaftGeo.attributes.position = baseQuad.attributes.position;
+    shaftGeo.attributes.uv = baseQuad.attributes.uv;
+
+    const shaftCount = Math.min(MAX_RAIN_SHAFTS, radarCells.length);
+    const shaftOrigins = new Float32Array(shaftCount * 3);
+    const shaftWidths = new Float32Array(shaftCount);
+
+    for (let i = 0; i < shaftCount; i++) {
+      const cell = radarCells[Math.floor((i / shaftCount) * radarCells.length)];
+      shaftOrigins[i * 3] = cell.u * 240000 - 120000;
+      shaftOrigins[i * 3 + 1] = nextRand() * Math.PI;
+      shaftOrigins[i * 3 + 2] = cell.v * 160000 - 80000;
+      shaftWidths[i] = 3600 + cell.rainNorm * 3200;
+    }
+
+    shaftGeo.setAttribute('aShaftOrigin', new THREE.InstancedBufferAttribute(shaftOrigins, 3));
+    shaftGeo.setAttribute('aShaftWidth', new THREE.InstancedBufferAttribute(shaftWidths, 1));
+    shaftGeo.instanceCount = shaftCount;
+
+    return {
+      streakGeometry: lineGeo,
+      shaftGeometry: shaftGeo,
+      hasRadarRainCells: true
+    };
+  }, [weatherTexture]);
+
+  const streakUniforms = useMemo(
+    () => ({
+      uTime: { value: 0 },
+      uWeatherData: { value: weatherTexture },
+      uCloudBaseY: { value: cloudBaseY },
+      uSnowTempThreshold: { value: snowTempThreshold },
+      uFallSpeed: { value: 1850.0 },
+      uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
+      uWindSpeed: { value: windSpeed }
+    }),
+    []
+  );
+
+  const shaftUniforms = useMemo(
+    () => ({
+      uTime: { value: 0 },
+      uWeatherData: { value: weatherTexture },
+      uCloudBaseY: { value: cloudBaseY },
+      uWindDir: { value: new THREE.Vector2(-0.85, -0.52).normalize() },
+      uWindSpeed: { value: windSpeed }
+    }),
+    []
+  );
 
   useFrame((state) => {
-    if (shaderMatRef.current) {
-      shaderMatRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-      shaderMatRef.current.uniforms.uCameraPos.value.copy(state.camera.position);
-      shaderMatRef.current.uniforms.uWeatherData.value = weatherTexture;
-      shaderMatRef.current.uniforms.uRainThreshold.value = rainThreshold;
-      shaderMatRef.current.uniforms.uWindSpeed.value = windSpeed;
+    const t = state.clock.elapsedTime;
+    if (streakMatRef.current) {
+      streakMatRef.current.uniforms.uTime.value = t;
+      streakMatRef.current.uniforms.uWeatherData.value = weatherTexture;
+      streakMatRef.current.uniforms.uCloudBaseY.value = cloudBaseY;
+      streakMatRef.current.uniforms.uSnowTempThreshold.value = snowTempThreshold;
+      streakMatRef.current.uniforms.uWindSpeed.value = windSpeed;
+    }
+    if (shaftMatRef.current) {
+      shaftMatRef.current.uniforms.uTime.value = t;
+      shaftMatRef.current.uniforms.uWeatherData.value = weatherTexture;
+      shaftMatRef.current.uniforms.uCloudBaseY.value = cloudBaseY;
+      shaftMatRef.current.uniforms.uWindSpeed.value = windSpeed;
     }
   });
 
-  // If completely dry across the region, omit particles entirely to save GPU cycles and prevent false rain
-  if (!hasPrecipitation) {
+  if (!hasRadarRainCells) {
     return null;
   }
 
   return (
     <group>
-      {/* Dynamic Radar-Driven Precipitation Particles (Rain streaks / Snowflakes locked to Cloud Advection) */}
-      <points ref={pointsRef} geometry={geometry} frustumCulled={false}>
+      {/* 1. Sub-Cloud Volumetric Rain Shafts (connects dark cloud base to terrain over Rain Radar echoes) */}
+      <mesh geometry={shaftGeometry} frustumCulled={false}>
         <shaderMaterial
-          ref={shaderMatRef}
-          uniforms={uniforms}
-          vertexShader={PrecipitationShader.vertexShader}
-          fragmentShader={PrecipitationShader.fragmentShader}
+          ref={shaftMatRef}
+          uniforms={shaftUniforms}
+          vertexShader={RainShaftCurtainShader.vertexShader}
+          fragmentShader={RainShaftCurtainShader.fragmentShader}
+          transparent={true}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+      {/* 2. 3D Falling Rain Streaks & Snowflakes locked to the Rain Radar cloud base */}
+      <lineSegments geometry={streakGeometry} frustumCulled={false}>
+        <shaderMaterial
+          ref={streakMatRef}
+          uniforms={streakUniforms}
+          vertexShader={RainStreakLineShader.vertexShader}
+          fragmentShader={RainStreakLineShader.fragmentShader}
           transparent={true}
           depthWrite={false}
           blending={THREE.AdditiveBlending}
         />
-      </points>
+      </lineSegments>
     </group>
   );
 };

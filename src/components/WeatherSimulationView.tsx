@@ -233,17 +233,18 @@ const SceneContent: React.FC<SceneContentProps> = ({
         />
       )}
 
-      {/* 2b. Hybrid Particle-Shader High-Altitude Cirrus Layer (8,200m - 10,800m Subtropical Jet Stream) */}
+      {/* 2b. Localized Satellite-Conforming Cloud Shell & Cumulus Billboards (Anchored at cloudBaseY) */}
       {showClouds && (
         <HighAltitudeCirrusParticles
           weatherTexture={weatherTexture}
           sunPosition={sunPosition}
           windSpeed={shaderParams.windSpeed}
+          cloudBaseY={classification.baseAltitudeM}
           visible={showClouds}
         />
       )}
 
-      {/* 3. Precipitation Effect (Strictly only renders Rain if raining, or Falling Snow at freezing elevations) */}
+      {/* 3. Cloud-Locked Precipitation (Pours directly from cloudBaseY in areas where Rain Radar shows rain) */}
       {showRain && (
         <RainParticles
           weatherTexture={weatherTexture}
@@ -252,6 +253,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
           activeMaxPrecipitation={activeMaxPrecipitation}
           hasActivePrecipitation={hasActivePrecipitation}
           windSpeed={shaderParams.windSpeed}
+          cloudBaseY={classification.baseAltitudeM}
         />
       )}
 
