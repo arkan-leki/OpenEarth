@@ -67,7 +67,7 @@ export const ClusteredCumulusBillboardShader = {
 
       // Apply spherical Earth Globe curvature drop (-454m at 50km, -1,818m at 100km)
       vec2 dGlobe = driftedXZ - uGlobeRefXZ;
-      float globeDrop = -dot(dGlobe, dGlobe) / 5500000.0;
+      float globeDrop = -dot(dGlobe, dGlobe) / 12742000.0;  // must match EARTH_CURVATURE_DIVISOR (2R)
 
       vec3 centerWorld = vec3(
         driftedXZ.x,

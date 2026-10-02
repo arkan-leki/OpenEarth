@@ -1,4 +1,10 @@
 import React, { useRef, useMemo } from 'react';
+import {
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT,
+} from '../utils/realSulaymaniyahTerrain';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 import { RainStreakLineShader, RainShaftCurtainShader } from '../shaders/rainShader';
@@ -77,13 +83,13 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
     const vertexEnds = new Float32Array(activeStreaks * 2);
     const seeds = new Float32Array(activeStreaks * 2);
 
-    const cellSpacingX = 480000 / Math.min(256, w);
-    const cellSpacingZ = 320000 / Math.min(256, h);
+    const cellSpacingX = DOMAIN_WIDTH_METERS / Math.min(256, w);
+    const cellSpacingZ = DOMAIN_HEIGHT_METERS / Math.min(256, h);
 
     for (let i = 0; i < activeStreaks; i++) {
       const cell = radarCells[(i * 13) % radarCells.length];
-      const worldX = cell.u * 480000 - 240000 + (nextRand() - 0.5) * cellSpacingX * 1.35;
-      const worldZ = cell.v * 320000 - 160000 + (nextRand() - 0.5) * cellSpacingZ * 1.35;
+      const worldX = cell.u * DOMAIN_WIDTH_METERS - HALF_DOMAIN_WIDTH + (nextRand() - 0.5) * cellSpacingX * 1.35;
+      const worldZ = cell.v * DOMAIN_HEIGHT_METERS - HALF_DOMAIN_HEIGHT + (nextRand() - 0.5) * cellSpacingZ * 1.35;
       const phase = nextRand();
       const sVal = nextRand();
 
@@ -123,9 +129,9 @@ export const RainParticles: React.FC<RainParticlesProps> = ({
 
     for (let i = 0; i < shaftCount; i++) {
       const cell = radarCells[Math.floor((i / shaftCount) * radarCells.length)];
-      shaftOrigins[i * 3] = cell.u * 480000 - 240000;
+      shaftOrigins[i * 3] = cell.u * DOMAIN_WIDTH_METERS - HALF_DOMAIN_WIDTH;
       shaftOrigins[i * 3 + 1] = nextRand() * Math.PI;
-      shaftOrigins[i * 3 + 2] = cell.v * 320000 - 160000;
+      shaftOrigins[i * 3 + 2] = cell.v * DOMAIN_HEIGHT_METERS - HALF_DOMAIN_HEIGHT;
       shaftWidths[i] = 6200 + cell.rainNorm * 5400;
     }
 

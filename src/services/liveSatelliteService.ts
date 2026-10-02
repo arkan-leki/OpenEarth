@@ -381,7 +381,7 @@ export async function loadRobustSatelliteImage(
   }
 
   candidateUrls.push({
-    url: '/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd',
+    url: '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
     date: 'Reference Pass',
     isPending: false,
     note: 'High-Definition Calibrated Northern Iraq Satellite Orthomosaic'
@@ -403,7 +403,7 @@ export async function loadRobustSatelliteImage(
   // Guaranteed fallback
   const fallback = new Image();
   fallback.crossOrigin = 'anonymous';
-  fallback.src = '/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd';
+  fallback.src = '/tiles/erbil_map_hd.jpg?v=erbil_map_hd';
   await new Promise((resolve) => {
     fallback.onload = resolve;
     fallback.onerror = resolve;
@@ -411,7 +411,7 @@ export async function loadRobustSatelliteImage(
 
   return {
     image: fallback,
-    src: '/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd',
+    src: '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
     isTodayPending: false,
     actualDate: 'Reference Orthomosaic',
     statusNote: 'Calibrated High-Definition Northern Iraq Satellite Orthomosaic'
@@ -643,7 +643,7 @@ export async function createRainViewerRadarCanvas(
         i.crossOrigin = 'anonymous';
         i.onload = () => resolve(i);
         i.onerror = () => reject(new Error('Base load failed'));
-        i.src = '/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd';
+        i.src = '/tiles/erbil_map_hd.jpg?v=erbil_map_hd';
       });
       ctx.drawImage(baseImg, 0, 0, canvas.width, canvas.height);
     } catch {

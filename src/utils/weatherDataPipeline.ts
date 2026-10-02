@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import { GridChunkData, WeatherCondition } from '../types';
 import {
   KURDISTAN_STATIONS,
+  WEATHER_SAMPLE_POINTS,
   KurdistanWeatherPayload,
   mapWmoToCondition
 } from '../services/weatherService';
@@ -15,35 +16,73 @@ import {
   MIN_LON,
   MAX_LON,
   MIN_LAT,
-  MAX_LAT
+  MAX_LAT,
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT
 } from './realSulaymaniyahTerrain';
 
 export const CHUNK_GRID_COLS = ['A', 'B', 'C', 'D'];
 export const CHUNK_GRID_ROWS = [1, 2, 3, 4];
-export const CHUNK_WIDTH_METERS = 120000; // 120 km per chunk (Total: 480 km across 4 cols)
-export const CHUNK_HEIGHT_METERS = 80000; // 80 km per chunk (Total: 320 km across 4 rows)
-export const CHUNK_SIZE_METERS = 120000;  // Backward compatibility
+
+/**
+ * NON-UNIFORM chunk layout centred on Erbil.
+ *
+ * Axis splits in km from the domain centre. The two middle bands are narrow (300 km) and
+ * the outer two wide (500 km), so the same 16 chunks tile the 1600 km map while the CENTRE
+ * gets mesh resolution the rim does not need. A uniform grid spends the triangle budget
+ * evenly, which is what left the mountains smoothed off.
+ *
+ *   splits: -800 | -300 | 0 | +300 | +800
+ *   bands :  500  | 300 | 300 | 300 | 500
+ */
+export const CHUNK_AXIS_SPLITS_KM = [-800, -300, 0, 300, 800];
+
+/** Target vertex spacing per ring, metres: fine centre, coarse rim. */
+export const CHUNK_TARGET_SPACING_M = { centre: 1500, middle: 2500, outer: 4000 } as const;
+
+export function chunkExtentKm(index: number): { startKm: number; sizeKm: number } {
+  const s = CHUNK_AXIS_SPLITS_KM;
+  return { startKm: s[index], sizeKm: s[index + 1] - s[index] };
+}
+
+/** Mesh subdivisions for a chunk, from its ring index (0 = centre block, 2 = outer rim). */
+export function chunkSubdivisionsFor(ring: number, widthMeters: number, heightMeters: number): number {
+  const spacing =
+    ring === 0
+      ? CHUNK_TARGET_SPACING_M.centre
+      : ring === 1
+        ? CHUNK_TARGET_SPACING_M.middle
+        : CHUNK_TARGET_SPACING_M.outer;
+  return Math.max(24, Math.round(Math.max(widthMeters, heightMeters) / spacing));
+}
+
+// Nominal size, kept for compatibility with code that still asks for one.
+export const CHUNK_WIDTH_METERS = 300000;
+export const CHUNK_HEIGHT_METERS = 300000;
+export const CHUNK_SIZE_METERS = 300000;
 
 export const KURDISTAN_SECTOR_NAMES: Record<string, string> = {
-  A1: 'Zakho & Khabur River Valley (Delal Bridge)',
-  B1: 'Amadiya (Amedi) Citadel Mesa & Gara Ridge',
-  C1: 'Rawanduz Canyon & Mount Korek (Soran)',
-  D1: 'Mount Halgurd (3,607m) & High Zagros Alpine',
+  A1: 'Black Sea Coast & North Anatolia (Samsun • Trabzon)',
+  B1: 'Northeast Anatolia & Georgia (Kars • Batumi)',
+  C1: 'South Caucasus & Azerbaijan (Tbilisi • Ganja)',
+  D1: 'Caspian Sea & Baku',
 
-  A2: 'Duhok Valley & Duhok Dam Reservoir',
-  B2: 'Erbil Northern Plain & Great Zab Basin',
-  C2: 'Ranya Plain & Mount Betwen Foothills',
-  D2: 'Choman & Iranian Border Alpine Passes',
+  A2: 'Central Anatolia (Kayseri • Malatya)',
+  B2: 'North Kurdistan (Diyarbakir • Batman • Van)',
+  C2: 'West Iran & Lake Urmia (Tabriz • Urmia)',
+  D2: 'South Caspian & Alborz (Rasht)',
 
-  A3: 'Nineveh Plains & Tigris River Confluence',
-  B3: 'Erbil Capital City (Ancient Citadel • 410m)',
-  C3: 'Lake Dukan Reservoir (Hydroelectric Dam • 516m)',
-  D3: 'Sulaymaniyah & Mount Goizha / Azmar (845m)',
+  A3: 'Syria & the Levant (Aleppo • Homs • Palmyra)',
+  B3: 'Nineveh & Erbil Plain (Mosul • Erbil)',
+  C3: 'Zagros: Sulaymaniyah & Kermanshah',
+  D3: 'Central Iran & Tehran',
 
-  A4: 'Kirkuk Citadel & Baba Gurgur Basin',
-  B4: 'Taq Taq & Little Zab River Valley',
-  C4: 'Lake Darbandikhan & Sirwan River Gorge',
-  D4: 'Halabja & Hawraman Mountain Terraces / Kalar'
+  A4: 'Jordan & North Arabia (Amman)',
+  B4: 'West Iraq & the Euphrates',
+  C4: 'South Iraq & Basra',
+  D4: 'Persian Gulf & Kuwait'
 };
 
 // Backward compatibility aliases
@@ -62,9 +101,20 @@ export function generateInitialChunkGrid(
       const rowNum = CHUNK_GRID_ROWS[r];
       const id = `${colLetter}${rowNum}`;
 
-      // Cartesian center in meters relative to (0,0) across 240km x 160km
-      const gridX = (c - 1.5) * CHUNK_WIDTH_METERS;
-      const gridY = (r - 1.5) * CHUNK_HEIGHT_METERS;
+      // Real extent of this chunk from the non-uniform split table.
+      const colExtent = chunkExtentKm(c);
+      const rowExtent = chunkExtentKm(r);
+      const widthMeters = colExtent.sizeKm * 1000;
+      const heightMeters = rowExtent.sizeKm * 1000;
+
+      // Chunk CENTRE in metres relative to the domain centre.
+      const gridX = (colExtent.startKm + colExtent.sizeKm / 2) * 1000;
+      const gridY = (rowExtent.startKm + rowExtent.sizeKm / 2) * 1000;
+
+      // Ring index drives mesh density: 0 = central block, 1 = middle band, 2 = outer rim.
+      const ringDistance = Math.max(Math.abs(c - 1.5), Math.abs(r - 1.5));
+      const ringIndex = ringDistance < 1 ? 0 : ringDistance < 1.6 ? 1 : 2;
+      const subdivisions = chunkSubdivisionsFor(ringIndex, widthMeters, heightMeters);
 
       // Real terrain elevation peak in this chunk
       const centerElevation = Math.round(getRealKurdistanElevation(gridX, gridY));
@@ -77,8 +127,11 @@ export function generateInitialChunkGrid(
       let temperature = 24;
 
       if (weatherPayload && weatherPayload.stations.length > 0) {
-        const u = c / 3.0;
-        const v = r / 3.0;
+        // Normalised position of this chunk's CENTRE in the domain. The old c/3, r/3
+        // assumed a uniform grid; with non-uniform chunks it samples the weather field
+        // from the wrong place.
+        const u = (gridX + HALF_DOMAIN_WIDTH) / DOMAIN_WIDTH_METERS;
+        const v = (gridY + HALF_DOMAIN_HEIGHT) / DOMAIN_HEIGHT_METERS;
 
         let totalWeight = 0;
         let weightedTemp = 0;
@@ -91,7 +144,7 @@ export function generateInitialChunkGrid(
         const hourIdx = Math.max(0, Math.min(23, weatherPayload.currentHourIndex + hourOffset));
 
         weatherPayload.stations.forEach((st, sIdx) => {
-          const meta = KURDISTAN_STATIONS[sIdx] || KURDISTAN_STATIONS[0];
+          const meta = WEATHER_SAMPLE_POINTS[sIdx] || KURDISTAN_STATIONS[0];
           const stU = (meta.lon - MIN_LON) / (MAX_LON - MIN_LON);
           const stV = (MAX_LAT - meta.lat) / (MAX_LAT - MIN_LAT);
           const dist = Math.hypot(u - stU, v - stV) + 0.12;
@@ -142,6 +195,9 @@ export function generateInitialChunkGrid(
         label: KURDISTAN_SECTOR_NAMES[id] || `Kurdistan Sector ${id}`,
         gridX,
         gridY,
+        widthMeters,
+        heightMeters,
+        subdivisions,
         condition,
         badge,
         cloudDensity,
@@ -164,7 +220,7 @@ export function generateInitialChunkGrid(
  * A: Storm Lightning / Reflectivity
  */
 export function createWeatherDataTexture(
-  size = 512,
+  size = 1024,
   weatherPayload?: KurdistanWeatherPayload | null
 ): { texture: THREE.DataTexture; rawData: Uint8Array } {
   const data = new Uint8Array(size * size * 4);
@@ -187,7 +243,7 @@ export function createWeatherDataTexture(
         let weightedTemp = 0;
 
         weatherPayload.stations.forEach((st, sIdx) => {
-          const meta = KURDISTAN_STATIONS[sIdx] || KURDISTAN_STATIONS[0];
+          const meta = WEATHER_SAMPLE_POINTS[sIdx] || KURDISTAN_STATIONS[0];
           const stU = (meta.lon - MIN_LON) / (MAX_LON - MIN_LON);
           const stV = (MAX_LAT - meta.lat) / (MAX_LAT - MIN_LAT);
 

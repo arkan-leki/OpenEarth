@@ -1,8 +1,16 @@
 /**
- * Cloud-Locked Rain Radar Precipitation Shader (3D Rain Streaks & Sub-Cloud Rain Shafts)
- * on the 480km x 320km Curved Earth Globe
+ * Cloud-Locked Rain Radar Precipitation Shader (3D Rain Streaks & Sub-Cloud Rain Shafts).
+ * UVs are derived from the live domain constants, NOT the original 480x320 km bounds: those
+ * hardcoded values pinned rain to the old central region and clamped everywhere else to a
+ * single edge texel - the same bug that confined the sky clouds.
  */
 import * as THREE from 'three';
+import {
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT
+} from '../utils/realSulaymaniyahTerrain';
 
 export const RainStreakLineShader = {
   uniforms: {
@@ -44,8 +52,8 @@ export const RainStreakLineShader = {
       vec2 cloudXZ = aCloudOrigin.xz + dynamicDrift;
 
       vec2 uv = clamp(vec2(
-        (aCloudOrigin.x + 240000.0) / 480000.0,
-        (aCloudOrigin.z + 160000.0) / 320000.0
+        (aCloudOrigin.x + ${HALF_DOMAIN_WIDTH.toFixed(1)}) / ${DOMAIN_WIDTH_METERS.toFixed(1)},
+        (aCloudOrigin.z + ${HALF_DOMAIN_HEIGHT.toFixed(1)}) / ${DOMAIN_HEIGHT_METERS.toFixed(1)}
       ), 0.002, 0.998);
 
       vec4 weather = texture2D(uWeatherData, uv);
@@ -65,7 +73,7 @@ export const RainStreakLineShader = {
 
       // Apply spherical Earth Globe curvature drop at cloudXZ
       vec2 dGlobe = cloudXZ - uGlobeRefXZ;
-      float globeDrop = -dot(dGlobe, dGlobe) / 5500000.0;
+      float globeDrop = -dot(dGlobe, dGlobe) / 12742000.0;  // must match EARTH_CURVATURE_DIVISOR (2R)
 
       float topY = uCloudBaseY + 240.0 + globeDrop;
       float bottomY = 260.0 + globeDrop;
@@ -156,8 +164,8 @@ export const RainShaftCurtainShader = {
       vec2 centerXZ = aShaftOrigin.xz + dynamicDrift;
 
       vec2 satUv = clamp(vec2(
-        (aShaftOrigin.x + 240000.0) / 480000.0,
-        (aShaftOrigin.z + 160000.0) / 320000.0
+        (aShaftOrigin.x + ${HALF_DOMAIN_WIDTH.toFixed(1)}) / ${DOMAIN_WIDTH_METERS.toFixed(1)},
+        (aShaftOrigin.z + ${HALF_DOMAIN_HEIGHT.toFixed(1)}) / ${DOMAIN_HEIGHT_METERS.toFixed(1)}
       ), 0.002, 0.998);
 
       vec4 w = texture2D(uWeatherData, satUv);
@@ -171,7 +179,7 @@ export const RainShaftCurtainShader = {
       }
 
       vec2 dGlobe = centerXZ - uGlobeRefXZ;
-      float globeDrop = -dot(dGlobe, dGlobe) / 5500000.0;
+      float globeDrop = -dot(dGlobe, dGlobe) / 12742000.0;  // must match EARTH_CURVATURE_DIVISOR (2R)
 
       float topY = uCloudBaseY + 260.0 + globeDrop;
       float bottomY = 240.0 + globeDrop;

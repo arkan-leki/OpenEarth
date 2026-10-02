@@ -41,9 +41,34 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
   compassHeading,
   onCameraAction
 }) => {
-  const [activeRegion, setActiveRegion] = useState<
-    'all' | 'north_iraq' | 'east_turkey' | 'east_syria' | 'west_iran'
-  >('all');
+  const [activeRegion, setActiveRegion] = useState<string>('all');
+
+  // Region tabs are DERIVED from the landmark list, so adding places cannot leave the
+  // counts stale (the previous hardcoded labels, e.g. "All 4 Regions (36)", silently
+  // went wrong the moment the map grew beyond four regions).
+  const regionTabs = useMemo(() => {
+    const labels: Record<string, string> = {
+      north_iraq: 'North Iraq',
+      south_iraq: 'South Iraq',
+      east_turkey: 'East Turkey',
+      east_syria: 'East Syria',
+      west_iran: 'West Iran',
+      levant: 'Levant',
+      caucasus: 'Caucasus'
+    };
+    const counts = new Map<string, number>();
+    for (const l of KURDISTAN_LANDMARKS) {
+      if (l.region) counts.set(l.region, (counts.get(l.region) ?? 0) + 1);
+    }
+    const tabs = [
+      { id: 'all', label: `All Regions (${KURDISTAN_LANDMARKS.length})`, count: KURDISTAN_LANDMARKS.length }
+    ];
+    for (const [id, label] of Object.entries(labels)) {
+      const count = counts.get(id) ?? 0;
+      if (count > 0) tabs.push({ id, label: `${label} (${count})`, count });
+    }
+    return tabs;
+  }, []);
 
   const currentLandmark = useMemo(() => {
     return KURDISTAN_LANDMARKS.find((l) => l.id === selectedLandmarkId) || KURDISTAN_LANDMARKS[0];
@@ -185,20 +210,14 @@ export const Ground360ControlBar: React.FC<Ground360ControlBarProps> = ({
           </div>
         </div>
 
-        {/* 4-Region Filter Tabs (North Iraq, East Turkey, East Syria, West Iran) + Scrollable 36 Ground Locations */}
+        {/* Region filter tabs (derived from the landmark list) + scrollable ground locations */}
         <div className="pt-2 flex flex-col gap-1.5">
           <div className="flex items-center justify-between gap-2 text-[10px] font-mono">
             <div className="flex items-center gap-1 overflow-x-auto scrollbar-none">
-              {[
-                { id: 'all', label: `All 4 Regions (${KURDISTAN_LANDMARKS.length})` },
-                { id: 'north_iraq', label: 'North Iraq (17)' },
-                { id: 'east_turkey', label: 'East Turkey (7)' },
-                { id: 'east_syria', label: 'East Syria (5)' },
-                { id: 'west_iran', label: 'West Iran (7)' }
-              ].map((reg) => (
+              {regionTabs.map((reg) => (
                 <button
                   key={reg.id}
-                  onClick={() => setActiveRegion(reg.id as typeof activeRegion)}
+                  onClick={() => setActiveRegion(reg.id)}
                   className={`px-2 py-0.5 rounded-md transition-colors cursor-pointer whitespace-nowrap ${
                     activeRegion === reg.id
                       ? 'bg-cyan-500/25 text-cyan-300 border border-cyan-500/50 font-bold'

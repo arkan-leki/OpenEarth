@@ -4,6 +4,7 @@ import { ZoomEarthTopBar } from './components/ZoomEarthTopBar';
 import { ZoomEarthFloatingControls } from './components/ZoomEarthFloatingControls';
 import { NorthVietnamWeatherCard } from './components/NorthVietnamWeatherCard';
 import { WeatherSimulationView } from './components/WeatherSimulationView';
+import { loadSatelliteTilesForChunks } from './services/chunkSatelliteService';
 import { SatelliteMetViewerModal } from './components/SatelliteMetViewerModal';
 import { HanoiSolarController } from './components/HanoiSolarController';
 import { Ground360ControlBar } from './components/Ground360ControlBar';
@@ -27,6 +28,7 @@ import {
   getGround360CameraPose
 } from './utils/realSulaymaniyahTerrain';
 import { CLOUD_PROFILES, computeRealCloudBaseMeters } from './services/cloudClassificationService';
+import { worldRectToLonLatBounds } from './utils/realSulaymaniyahTerrain';
 import { GridChunkData, ShaderParameters, Landmark } from './types';
 import {
   SatelliteSourceMode,
@@ -72,8 +74,20 @@ export default function App() {
   // Eye button state to hide all UI panels, bars, and 3D pins for an unobstructed view
   const [hideAll, setHideAll] = useState<boolean>(false);
 
+  /**
+   * Per-chunk satellite imagery for the active date + sensor, fetched at RUNTIME.
+   * Deliberately not pre-rendered to files: every day's pass differs, so a product must
+   * fetch live. Each chunk renders the satellite's own full-resolution view of its region
+   * instead of one whole-domain image stretched across all 16 chunks.
+   */
+  const [chunkSatelliteTextures, setChunkSatelliteTextures] = useState<
+    Map<string, THREE.Texture>
+  >(() => new Map());
+
   // Live Satellite and Radar Map Source
-  const [satelliteMode, setSatelliteMode] = useState<SatelliteSourceMode>('nasa_today');
+  // Default to the HD base map. 'nasa_today' opens on the day's satellite pass, which is
+// routinely 80-90% cloud over this region and hides the map entirely.
+  const [satelliteMode, setSatelliteMode] = useState<SatelliteSourceMode>('hd_base');
   const [satelliteDate, setSatelliteDate] = useState<string>(() => getTodayDateIso(0));
   const [selectedSensor, setSelectedSensor] = useState<string>('VIIRS_SNPP_CorrectedReflectance_TrueColor');
   const [activeRadarGroundTexture, setActiveRadarGroundTexture] = useState<THREE.Texture | null>(null);
@@ -275,13 +289,13 @@ export default function App() {
 
   // Real multi-channel live weather texture across North Vietnam (Station-interpolated baseline)
   const weatherTexture = useMemo(() => {
-    const { texture } = createWeatherDataTexture(512, weatherPayload);
+    const { texture } = createWeatherDataTexture(1024, weatherPayload);
     return texture;
   }, [weatherPayload]);
 
   // Dedicated Live Weather + Live Satellite IR + Live Radar Cloud Texture for 'radar_live' (Live mode)
   const liveCombinedCloud = useMemo(() => {
-    return buildCombinedLiveWeatherAndCloudTexture(weatherPayload, liveIrCanvas, liveRadarCanvas, 512);
+    return buildCombinedLiveWeatherAndCloudTexture(weatherPayload, liveIrCanvas, liveRadarCanvas, 1024);
   }, [weatherPayload, liveIrCanvas, liveRadarCanvas]);
 
   // Clean zero-cloud texture for HD Base mode or while switching passes
@@ -301,8 +315,16 @@ export default function App() {
       return satelliteCloudAnalysis?.weatherDataTexture || clearWeatherTexture;
     }
     if (satelliteMode === 'radar_live') {
-      return liveCombinedCloud.weatherDataTexture || weatherTexture;
+      // LIVE combines all three: HD ground (always), live radar on the ground, and cloud
+      // coverage taken from the live SATELLITE pass rather than the radar composite, so the
+      // sky shows real satellite cloud while the ground shows radar echo.
+      return (
+        satelliteCloudAnalysis?.weatherDataTexture ||
+        liveCombinedCloud.weatherDataTexture ||
+        weatherTexture
+      );
     }
+    // HD Base is the clean basemap view — no weather overlay, by design.
     return clearWeatherTexture;
   }, [satelliteMode, satelliteCloudAnalysis, liveCombinedCloud, weatherTexture, clearWeatherTexture]);
 
@@ -384,6 +406,34 @@ export default function App() {
       target: pose.target
     });
   }, [shaderParams.terrainExaggeration]);
+
+  // Load one satellite image per chunk whenever the date, sensor or mode changes.
+  useEffect(() => {
+    const isSatelliteMode = satelliteMode === 'nasa_today' || satelliteMode === 'nasa_yesterday';
+    if (!isSatelliteMode || chunks.length === 0) {
+      setChunkSatelliteTextures((prev) => (prev.size ? new Map() : prev));
+      return;
+    }
+
+    let cancelled = false;
+    const requests = chunks.map((c) => {
+      const widthMeters = c.widthMeters ?? 300000;
+      const heightMeters = c.heightMeters ?? 300000;
+      return {
+        id: c.id,
+        widthKm: widthMeters / 1000,
+        bounds: worldRectToLonLatBounds(c.gridX, c.gridY, widthMeters, heightMeters)
+      };
+    });
+
+    loadSatelliteTilesForChunks(requests, selectedSensor, effectiveSatelliteDate).then((map) => {
+      if (!cancelled) setChunkSatelliteTextures(map);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [satelliteMode, selectedSensor, effectiveSatelliteDate, chunks]);
 
   const handleResetCamera = useCallback(() => {
     setIsGround360Mode(false);
@@ -492,6 +542,7 @@ export default function App() {
         autoRotate={autoRotate}
         satelliteLayer="hd"
         groundTexture={activeGroundTexture}
+        chunkSatelliteTextures={chunkSatelliteTextures}
         sunPosition={sunPosition}
         onSelectLandmark={handleSelectLandmark}
         targetCameraPose={targetCameraPose}

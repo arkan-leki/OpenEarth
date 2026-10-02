@@ -17,6 +17,7 @@ import {
 import {
   NorthVietnamWeatherPayload,
   KURDISTAN_STATIONS,
+  WEATHER_SAMPLE_POINTS,
   fetchRealStationPrecipitationForDate
 } from './weatherService';
 import {
@@ -113,7 +114,7 @@ function loadReferenceGroundData(targetWidth = EXTRACT_RES, targetHeight = EXTRA
   refGroundPromise = (async () => {
     const [nasaPixels, hdPixels] = await Promise.all([
       loadImagePixels('/tiles/nasa_history/2026-09-15.jpg?v=kurdistan_ref', targetWidth, targetHeight),
-      loadImagePixels('/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd', targetWidth, targetHeight)
+      loadImagePixels('/tiles/erbil_map_ref.jpg?v=erbil_map_ref', targetWidth, targetHeight)
     ]);
 
     const primary = nasaPixels || hdPixels;
@@ -549,8 +550,8 @@ export function extractCloudsFromSatelliteImage(
       if (cloudVal >= 80) {
         let localPrecipMm = 0;
         let wSum = 0;
-        for (let sIdx = 0; sIdx < KURDISTAN_STATIONS.length; sIdx++) {
-          const stMeta = KURDISTAN_STATIONS[sIdx];
+        for (let sIdx = 0; sIdx < WEATHER_SAMPLE_POINTS.length; sIdx++) {
+          const stMeta = WEATHER_SAMPLE_POINTS[sIdx];
           const stPrecip =
             dateStationPrecip && dateStationPrecip[sIdx] !== undefined
               ? dateStationPrecip[sIdx]
@@ -874,7 +875,7 @@ export function buildCombinedLiveWeatherAndCloudTexture(
   weatherPayload: NorthVietnamWeatherPayload,
   liveIrCanvas?: HTMLCanvasElement | null,
   liveRadarCanvas?: HTMLCanvasElement | null,
-  size = 512
+  size = 1024
 ): {
   weatherDataTexture: THREE.DataTexture;
   cloudDeckTexture: THREE.CanvasTexture;
@@ -959,7 +960,7 @@ export function buildCombinedLiveWeatherAndCloudTexture(
 
       if (weatherPayload?.stations?.length) {
         weatherPayload.stations.forEach((st, sIdx) => {
-          const meta = KURDISTAN_STATIONS[sIdx] || KURDISTAN_STATIONS[0];
+          const meta = WEATHER_SAMPLE_POINTS[sIdx] || KURDISTAN_STATIONS[0];
           const stU = (meta.lon - MIN_LON) / (MAX_LON - MIN_LON);
           const stV = (MAX_LAT - meta.lat) / (MAX_LAT - MIN_LAT);
 

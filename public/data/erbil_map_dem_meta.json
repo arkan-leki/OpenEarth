@@ -1,0 +1,21 @@
+{
+  "width": 4096,
+  "height": 4096,
+  "minLon": 35.10439430714793,
+  "maxLon": 52.91360569285207,
+  "minLat": 28.956026136343084,
+  "maxLat": 43.42597386365692,
+  "centerLon": 44.009,
+  "centerLat": 36.191,
+  "radiusKm": 800,
+  "kmPerDegLon": 89.84114823210847,
+  "kmPerDegLat": 110.574,
+  "domainWidthKm": 1600,
+  "domainHeightKm": 1600,
+  "minElevation": -2589,
+  "maxElevation": 5570,
+  "rowOrder": "north-to-south",
+  "encoding": "Int16 little-endian metres above sea level",
+  "source": "Mapzen/AWS terrarium zoom 9",
+  "generatedAt": "2026-09-30T21:35:39.284Z"
+}

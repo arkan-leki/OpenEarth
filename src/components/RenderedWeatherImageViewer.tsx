@@ -69,7 +69,7 @@ export const RenderedWeatherImageViewer: React.FC<RenderedWeatherImageViewerProp
     const targetSrc =
       weatherMode === 'history'
         ? `/tiles/nasa_history/${selectedHistoryDate}.jpg`
-        : '/tiles/north_iraq_hd_satellite.jpg';
+        : '/tiles/erbil_map_hd.jpg';
 
     const img = new Image();
     img.crossOrigin = 'anonymous';

@@ -1,4 +1,10 @@
 import React, { useMemo, useRef, useEffect } from 'react';
+import {
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT,
+} from '../utils/realSulaymaniyahTerrain';
 import * as THREE from 'three';
 import { useFrame, useThree } from '@react-three/fiber';
 import { SunPositionResult } from '../utils/sunPosition';
@@ -154,8 +160,8 @@ export const CloudShadowDepthProjector: React.FC<CloudShadowDepthProjectorProps>
         void main() {
           // World XZ coordinate at cloud-base reference plane (480km x 320km globe domain)
           vec2 worldXZ = vec2(
-            vUv.x * 480000.0 - 240000.0,
-            vUv.y * 320000.0 - 160000.0
+            vUv.x * ${DOMAIN_WIDTH_METERS.toFixed(1)} - ${HALF_DOMAIN_WIDTH.toFixed(1)},
+            vUv.y * ${DOMAIN_HEIGHT_METERS.toFixed(1)} - ${HALF_DOMAIN_HEIGHT.toFixed(1)}
           );
 
           vec2 dynamicDrift = uWindDir * (uTime * uWindSpeed * 3.5);
@@ -176,8 +182,8 @@ export const CloudShadowDepthProjector: React.FC<CloudShadowDepthProjectorProps>
             vec2 rayXZ = worldXZ + uSunDir.xz * ((altY - uCloudBaseY) / max(0.22, uSunDir.y));
             vec2 advectedXZ = rayXZ - dynamicDrift;
             vec2 satUv = clamp(vec2(
-              (advectedXZ.x + 240000.0) / 480000.0,
-              (advectedXZ.y + 160000.0) / 320000.0
+              (advectedXZ.x + ${HALF_DOMAIN_WIDTH.toFixed(1)}) / ${DOMAIN_WIDTH_METERS.toFixed(1)},
+              (advectedXZ.y + ${HALF_DOMAIN_HEIGHT.toFixed(1)}) / ${DOMAIN_HEIGHT_METERS.toFixed(1)}
             ), 0.002, 0.998);
 
             vec4 w = texture2D(uWeatherData, satUv);

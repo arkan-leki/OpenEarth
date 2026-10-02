@@ -7,6 +7,13 @@
  * Zakho & Delal Bridge, Soran / Rawanduz, Kirkuk, and Lake Darbandikhan.
  */
 import { LiveWeatherStation, WeatherCondition } from '../types';
+import {
+  MIN_LON,
+  MAX_LON,
+  MIN_LAT,
+  MAX_LAT,
+  MAP_RADIUS_METERS
+} from '../utils/realSulaymaniyahTerrain';
 
 export interface StationLocation {
   id: string;
@@ -37,6 +44,65 @@ export const KURDISTAN_STATIONS: StationLocation[] = [
 export const NORTH_IRAQ_STATIONS = KURDISTAN_STATIONS;
 export const SULAYMANIYAH_STATIONS = KURDISTAN_STATIONS;
 export const NORTH_VIETNAM_STATIONS = KURDISTAN_STATIONS;
+
+/**
+ * Real weather SAMPLING points across the entire map.
+ *
+ * The named Kurdistan stations above occupy roughly a 350 km box in the centre of the map.
+ * On the old 480 km terrain that was fine. On the current 1600 km map it left about 75% of
+ * the area with NO observation — cloud cover, rain and temperature out there were being
+ * extrapolated from the Kurdish cluster, which is why the cloud field looked synthetic and
+ * decorative away from Kurdistan.
+ *
+ * These lattice points are genuine Open-Meteo sample locations spread to the map rim, so the
+ * cloud field is driven by measured weather everywhere. They are sampling-only: display code
+ * keeps using the named KURDISTAN_STATIONS list.
+ */
+const WEATHER_GRID_STEP_KM = 220;
+
+function buildWeatherSampleLattice(): StationLocation[] {
+  const centerLon = (MIN_LON + MAX_LON) / 2;
+  const centerLat = (MIN_LAT + MAX_LAT) / 2;
+  const kmPerDegLon = 111.32 * Math.cos((centerLat * Math.PI) / 180);
+  const kmPerDegLat = 110.574;
+  const lonSpan = MAX_LON - MIN_LON;
+  const latSpan = MAX_LAT - MIN_LAT;
+  const reachKm = MAP_RADIUS_METERS / 1000;
+
+  const points: StationLocation[] = [];
+  let n = 0;
+
+  for (let dLat = -reachKm; dLat <= reachKm; dLat += WEATHER_GRID_STEP_KM) {
+    for (let dLon = -reachKm; dLon <= reachKm; dLon += WEATHER_GRID_STEP_KM) {
+      // Only points inside the rendered circle are worth requesting.
+      if (Math.hypot(dLon, dLat) > reachKm) continue;
+
+      const lat = centerLat + dLat / kmPerDegLat;
+      const lon = centerLon + dLon / kmPerDegLon;
+      if (lat < MIN_LAT || lat > MAX_LAT || lon < MIN_LON || lon > MAX_LON) continue;
+
+      const colIndex = Math.min(3, Math.max(0, Math.floor(((lon - MIN_LON) / lonSpan) * 4)));
+      const rowIndex = Math.min(3, Math.max(0, Math.floor(((MAX_LAT - lat) / latSpan) * 4)));
+
+      points.push({
+        id: `grid_${n++}`,
+        name: '',
+        lat,
+        lon,
+        nominalElevation: 0,
+        colIndex,
+        rowIndex
+      });
+    }
+  }
+  return points;
+}
+
+/** Every point actually requested from Open-Meteo: named stations first, then the lattice. */
+export const WEATHER_SAMPLE_POINTS: StationLocation[] = [
+  ...KURDISTAN_STATIONS,
+  ...buildWeatherSampleLattice()
+];
 
 export function mapWmoToCondition(code: number): WeatherCondition {
   if (code === 0 || code === 1) return 'clear';
@@ -291,15 +357,15 @@ export const FALLBACK_WEATHER_DATA: KurdistanWeatherPayload = {
   ],
   hourly: {
     times: Array.from({ length: 24 }, (_, i) => `${i.toString().padStart(2, '0')}:00`),
-    temperatures: Array(12).fill(null).map(() => [
+    temperatures: Array(WEATHER_SAMPLE_POINTS.length).fill(null).map(() => [
       15, 14, 14, 13, 13, 14, 16, 19, 22, 24, 26, 27, 27, 26, 25, 24, 22, 20, 19, 18, 17, 16, 16, 15
     ]),
-    cloudCovers: Array(12).fill(null).map(() => [
+    cloudCovers: Array(WEATHER_SAMPLE_POINTS.length).fill(null).map(() => [
       10, 10, 10, 15, 15, 20, 20, 25, 30, 30, 25, 20, 15, 15, 15, 15, 10, 10, 10, 10, 10, 10, 10, 10
     ]),
-    precipitations: Array(12).fill(null).map(() => Array(24).fill(0)),
-    weatherCodes: Array(12).fill(null).map(() => Array(24).fill(1)),
-    windSpeeds: Array(12).fill(null).map(() => [
+    precipitations: Array(WEATHER_SAMPLE_POINTS.length).fill(null).map(() => Array(24).fill(0)),
+    weatherCodes: Array(WEATHER_SAMPLE_POINTS.length).fill(null).map(() => Array(24).fill(1)),
+    windSpeeds: Array(WEATHER_SAMPLE_POINTS.length).fill(null).map(() => [
       2, 2, 2, 2, 3, 3, 4, 4, 5, 5, 5, 6, 6, 6, 5, 5, 4, 4, 3, 3, 3, 2, 2, 2
     ])
   },
@@ -311,8 +377,8 @@ export const FALLBACK_WEATHER_DATA: KurdistanWeatherPayload = {
  * Fetches real-time live weather observations from Open-Meteo across Northern Iraq & Kurdistan
  */
 export async function fetchLiveKurdistanWeather(): Promise<KurdistanWeatherPayload> {
-  const lats = KURDISTAN_STATIONS.map(s => s.lat).join(',');
-  const lons = KURDISTAN_STATIONS.map(s => s.lon).join(',');
+  const lats = WEATHER_SAMPLE_POINTS.map(s => s.lat).join(',');
+  const lons = WEATHER_SAMPLE_POINTS.map(s => s.lon).join(',');
 
   const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,rain,showers,snowfall,weather_code,cloud_cover,pressure_msl,surface_pressure,wind_speed_10m,wind_direction_10m&hourly=temperature_2m,relative_humidity_2m,precipitation_probability,precipitation,rain,weather_code,cloud_cover,wind_speed_10m&forecast_days=1&timezone=Asia%2FBaghdad`;
 
@@ -333,7 +399,7 @@ export async function fetchLiveKurdistanWeather(): Promise<KurdistanWeatherPaylo
   const hourlyWinds: number[][] = [];
 
   stationArray.forEach((stData: any, idx: number) => {
-    const meta = KURDISTAN_STATIONS[idx] || KURDISTAN_STATIONS[0];
+    const meta = WEATHER_SAMPLE_POINTS[idx] || KURDISTAN_STATIONS[0];
     const curr = stData.current || {};
     const cond = mapWmoToCondition(curr.weather_code || 0);
 
@@ -418,8 +484,8 @@ export async function fetchRealStationPrecipitationForDate(dateIso: string): Pro
     return datePrecipCache.get(dateIso)!;
   }
 
-  const lats = KURDISTAN_STATIONS.map((s) => s.lat).join(',');
-  const lons = KURDISTAN_STATIONS.map((s) => s.lon).join(',');
+  const lats = WEATHER_SAMPLE_POINTS.map((s) => s.lat).join(',');
+  const lons = WEATHER_SAMPLE_POINTS.map((s) => s.lon).join(',');
 
   const endpoints = [
     `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lons}&hourly=precipitation,rain,showers&start_date=${dateIso}&end_date=${dateIso}&timezone=Asia%2FBaghdad`,
@@ -434,7 +500,7 @@ export async function fetchRealStationPrecipitationForDate(dateIso: string): Pro
       const arr = Array.isArray(data) ? data : [data];
       if (!arr.length || !arr[0]?.hourly) continue;
 
-      const stationPeakPrecips = KURDISTAN_STATIONS.map((_, idx) => {
+      const stationPeakPrecips = WEATHER_SAMPLE_POINTS.map((_, idx) => {
         const st = arr[idx] || arr[0];
         const pArr: number[] = st?.hourly?.precipitation || [];
         if (!pArr.length) return 0;

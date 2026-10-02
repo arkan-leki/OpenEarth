@@ -1,4 +1,10 @@
 import React, { useMemo, useEffect, useState, useRef } from 'react';
+import {
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT,
+} from '../utils/realSulaymaniyahTerrain';
 import * as THREE from 'three';
 import { useFrame } from '@react-three/fiber';
 import gsap from 'gsap';
@@ -7,13 +13,25 @@ import {
   getKurdistanSatelliteTexture,
   loadRealDemData
 } from '../utils/realSulaymaniyahTerrain';
-import { CHUNK_WIDTH_METERS, CHUNK_HEIGHT_METERS } from '../utils/weatherDataPipeline';
+import {
+  CHUNK_WIDTH_METERS,
+  CHUNK_HEIGHT_METERS,
+  chunkSubdivisionsFor
+} from '../utils/weatherDataPipeline';
+import { loadChunkTile } from '../services/chunkTileService';
 import { SunPositionResult } from '../utils/sunPosition';
 
 interface TerrainChunkProps {
   id: string;
   gridX: number;
   gridY: number;
+  /** Chunk extent in metres. Non-uniform: small+fine near the centre, large+coarse at the rim. */
+  widthMeters?: number;
+  heightMeters?: number;
+  /** Pre-computed mesh subdivisions for this chunk's ring. */
+  subdivisions?: number;
+  /** Satellite pass for THIS chunk on the active date, fetched at runtime. */
+  chunkSatelliteTexture?: THREE.Texture | null;
   wireframe?: boolean;
   isSelected?: boolean;
   terrainExaggeration?: number;
@@ -36,8 +54,13 @@ interface TerrainChunkProps {
  *   - Warm / hot air: sharp high-contrast surface details with soft cerulean horizon blue at 50km-110km.
  */
 export const TerrainChunk: React.FC<TerrainChunkProps> = ({
+  id,
   gridX,
   gridY,
+  widthMeters = CHUNK_WIDTH_METERS,
+  heightMeters = CHUNK_HEIGHT_METERS,
+  subdivisions,
+  chunkSatelliteTexture = null,
   wireframe = false,
   isSelected = false,
   terrainExaggeration = 1.35,
@@ -56,6 +79,11 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     uPhenomena: { value: THREE.Texture | null };
     uPhenomenaPrev: { value: THREE.Texture | null };
     uWeatherData: { value: THREE.Texture | null };
+    /** Domain-wide ground overlay (live radar). Uses the DOMAIN uv, not the chunk-local one. */
+    uGroundOverlay: { value: THREE.Texture | null };
+    uHasGroundOverlay: { value: number };
+    /** 0..1 weight of the live radar overlay over the HD ground. */
+    uGroundOverlayStrength: { value: number };
     uCloudShadowDepth: { value: THREE.Texture | null };
     uTransitionProgress: { value: number };
     uSunDir: { value: THREE.Vector3 };
@@ -67,6 +95,9 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     uPhenomena: { value: phenomenaTexture },
     uPhenomenaPrev: { value: phenomenaTexture },
     uWeatherData: { value: weatherTexture },
+    uGroundOverlay: { value: null as THREE.Texture | null },
+    uHasGroundOverlay: { value: 0 },
+    uGroundOverlayStrength: { value: 0.45 },
     uCloudShadowDepth: { value: cloudShadowDepthTexture },
     uTransitionProgress: { value: 1.0 },
     uSunDir: { value: new THREE.Vector3(0.55, 0.78, 0.28).normalize() },
@@ -104,25 +135,47 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
   }, []);
 
   const geometry = useMemo(() => {
-    const res = isSelected ? 96 : 80;
+    // Density comes from the chunk's ring (CHUNK_TARGET_SPACING_M): the central band
+    // gets ~1.5 km vertex spacing, the rim ~4 km. Selecting a chunk refines it one step.
+    const base = subdivisions ?? chunkSubdivisionsFor(1, widthMeters, heightMeters);
+    const res = isSelected ? Math.round(base * 1.25) : base;
     return buildRealChunkGeometry(
       gridX,
       gridY,
-      CHUNK_WIDTH_METERS,
-      CHUNK_HEIGHT_METERS,
+      widthMeters,
+      heightMeters,
       res,
       terrainExaggeration
     );
-  }, [gridX, gridY, demLoaded, terrainExaggeration, isSelected]);
+  }, [gridX, gridY, widthMeters, heightMeters, subdivisions, demLoaded, terrainExaggeration, isSelected]);
 
-  const satelliteTexture = useMemo(() => {
-    if (customTexture) return customTexture;
-    return getKurdistanSatelliteTexture('hd');
-  }, [customTexture]);
+  // Each chunk renders with its OWN high-resolution imagery tile. UVs from
+  // buildRealChunkGeometry are local to the chunk, so the tile lines up exactly.
+  const [chunkTile, setChunkTile] = useState<THREE.Texture | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    loadChunkTile(id).then((tex) => {
+      if (mounted && tex) setChunkTile(tex);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [id]);
+
+  // GROUND IS ALWAYS THE HD BASE MAP.
+  //
+  // The daily satellite pass is NOT draped on the terrain: it belongs to the cloud layer.
+  // customTexture stays ahead of the HD tile so the live radar overlay still lands on the
+  // ground in radar mode.
+  // Ground base is ALWAYS the HD tile. customTexture (live radar) comes through its own
+  // domain-wide overlay uniform so the local per-chunk UVs cannot tile it.
+  const satelliteTexture = chunkTile;
 
   useFrame(() => {
     shaderUniformsRef.current.uTerrainExaggeration.value = terrainExaggeration;
     shaderUniformsRef.current.uWeatherData.value = weatherTexture;
+    shaderUniformsRef.current.uGroundOverlay.value = customTexture ?? null;
+    shaderUniformsRef.current.uHasGroundOverlay.value = customTexture ? 1 : 0;
     shaderUniformsRef.current.uCloudShadowDepth.value = cloudShadowDepthTexture;
     shaderUniformsRef.current.uCloudBaseY.value = cloudBaseY;
     shaderUniformsRef.current.uCloudTopY.value = cloudTopY;
@@ -137,6 +190,9 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
       shader.uniforms.uPhenomena = shaderUniformsRef.current.uPhenomena;
       shader.uniforms.uPhenomenaPrev = shaderUniformsRef.current.uPhenomenaPrev;
       shader.uniforms.uWeatherData = shaderUniformsRef.current.uWeatherData;
+      shader.uniforms.uGroundOverlay = shaderUniformsRef.current.uGroundOverlay;
+      shader.uniforms.uHasGroundOverlay = shaderUniformsRef.current.uHasGroundOverlay;
+      shader.uniforms.uGroundOverlayStrength = shaderUniformsRef.current.uGroundOverlayStrength;
       shader.uniforms.uCloudShadowDepth = shaderUniformsRef.current.uCloudShadowDepth;
       shader.uniforms.uTransitionProgress = shaderUniformsRef.current.uTransitionProgress;
       shader.uniforms.uSunDir = shaderUniformsRef.current.uSunDir;
@@ -162,7 +218,11 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         // At 50km distance, Earth drops by ~454m (flat plains disappear below horizon)
         // At 100km distance, Earth drops by ~1,818m (mountains disappear below horizon)
         vec2 dGlobe = wp.xz - uGlobeRefXZ;
-        float globeCurveDrop = -dot(dGlobe, dGlobe) / 5500000.0;
+        // MUST match EARTH_CURVATURE_DIVISOR in realSulaymaniyahTerrain (12,742,000 = 2R).
+        // This was left at the old 5,500,000 while the base slab and cloud shader moved to
+        // the real value, so the terrain curved 2.3x more than its own base and sank below
+        // it — the base slab then covered the map from the rim inward.
+        float globeCurveDrop = -dot(dGlobe, dGlobe) / 12742000.0;
         wp.y += globeCurveDrop;
         vWorldPos = wp.xyz;
         vWorldNorm = normalize(mat3(modelMatrix) * objectNormal);
@@ -176,6 +236,9 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         uniform sampler2D uPhenomena;
         uniform sampler2D uPhenomenaPrev;
         uniform sampler2D uWeatherData;
+        uniform sampler2D uGroundOverlay;
+        uniform float uHasGroundOverlay;
+        uniform float uGroundOverlayStrength;
         uniform sampler2D uCloudShadowDepth;
         uniform float uTransitionProgress;
         uniform vec3 uSunDir;
@@ -190,11 +253,29 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
       shader.fragmentShader = shader.fragmentShader.replace(
         '#include <map_fragment>',
         `#include <map_fragment>
-        // Map world XZ (-240km..+240km, -160km..+160km) to domain UV (0..1)
+        // Map world XZ to domain UV (0..1). These bounds MUST match the terrain domain:
+        // this UV feeds the weather texture (cloud density), the phenomena layer and the
+        // cloud-shadow lookup. Hardcoded 480x320 km bounds meant that on the 1600 km map
+        // every sample past the old rim clamped to the edge, so clouds only appeared over
+        // the centre and the rest of the map read a single stretched edge texel.
         vec2 domainUv = clamp(vec2(
-          (vWorldPos.x + 240000.0) / 480000.0,
-          (vWorldPos.z + 160000.0) / 320000.0
+          (vWorldPos.x + ${HALF_DOMAIN_WIDTH.toFixed(1)}) / ${DOMAIN_WIDTH_METERS.toFixed(1)},
+          (vWorldPos.z + ${HALF_DOMAIN_HEIGHT.toFixed(1)}) / ${DOMAIN_HEIGHT_METERS.toFixed(1)}
         ), 0.002, 0.998);
+
+        // LIVE RADAR OVERLAY - sampled at domainUv because it spans the whole map. Fed through
+        // the chunk-local uv it repeated once per chunk ("dozens of small maps").
+        // Uses the overlay's OWN alpha: forcing a 55% floor washed every pixel, including
+        // areas with no radar echo, which muddied the HD ground across the whole map.
+        if (uHasGroundOverlay > 0.5) {
+          vec4 groundOverlay = texture2D(uGroundOverlay, domainUv);
+          // Weighted DOWN so the HD ground stays the dominant layer: at full overlay alpha
+          // the radar/IR canvas covered most of the map and buried the HD imagery.
+          float overlayAlpha = clamp(groundOverlay.a, 0.0, 1.0) * uGroundOverlayStrength;
+          if (overlayAlpha > 0.02) {
+            diffuseColor.rgb = mix(diffuseColor.rgb, groundOverlay.rgb, overlayAlpha);
+          }
+        }
 
         float transProg = clamp(uTransitionProgress, 0.0, 1.0);
         vec4 phenom = texture2D(uPhenomena, domainUv) * transProg;
@@ -215,8 +296,8 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         float baseDepthDelta = max(150.0, uCloudBaseY - vUnCurvedY);
         vec2 initialRayXZ = vWorldPos.xz + uSunDir.xz * (baseDepthDelta / sunElevY);
         vec2 initialShadowUv = clamp(vec2(
-          (initialRayXZ.x + 240000.0) / 480000.0,
-          (initialRayXZ.y + 160000.0) / 320000.0
+          (initialRayXZ.x + ${HALF_DOMAIN_WIDTH.toFixed(1)}) / ${DOMAIN_WIDTH_METERS.toFixed(1)},
+          (initialRayXZ.y + ${HALF_DOMAIN_HEIGHT.toFixed(1)}) / ${DOMAIN_HEIGHT_METERS.toFixed(1)}
         ), 0.002, 0.998);
 
         vec4 depthPass1 = texture2D(uCloudShadowDepth, initialShadowUv);
@@ -225,8 +306,8 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         float refinedDepthDelta = max(150.0, effectiveCasterHeight - vUnCurvedY);
         vec2 refinedRayXZ = vWorldPos.xz + uSunDir.xz * (refinedDepthDelta / sunElevY);
         vec2 refinedShadowUv = clamp(vec2(
-          (refinedRayXZ.x + 240000.0) / 480000.0,
-          (refinedRayXZ.y + 160000.0) / 320000.0
+          (refinedRayXZ.x + ${HALF_DOMAIN_WIDTH.toFixed(1)}) / ${DOMAIN_WIDTH_METERS.toFixed(1)},
+          (refinedRayXZ.y + ${HALF_DOMAIN_HEIGHT.toFixed(1)}) / ${DOMAIN_HEIGHT_METERS.toFixed(1)}
         ), 0.002, 0.998);
 
         vec4 fbmShadowSample = texture2D(uCloudShadowDepth, refinedShadowUv);
@@ -260,9 +341,22 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
 
         // Distant mountains & land turn atmospheric Rayleigh blue (stronger cobalt-blue when cold,
         // clearer detail with soft sky-azure tint at 45km-125km when warm/hot)
-        float blueStartKm = mix(28.0, 18.0, coldAirFactor);
-        float blueFullKm  = mix(125.0, 92.0, coldAirFactor);
-        float rayleighBlueAmount = smoothstep(blueStartKm, blueFullKm, distKm) * mix(0.58, 0.78, coldAirFactor);
+        // Atmospheric Rayleigh haze over distant land.
+        //
+        // The distances ADAPT to viewing altitude so the gradient always spans the visible
+        // map. Previously they were fixed at 18-125 km, tuned for the original 480 km map seen
+        // from ~215 km; on a 1600 km map viewed from ~1700 km up every pixel sat past 125 km
+        // and the whole map was blended 82% into cobalt blue. Simply disabling the effect from
+        // orbit lost the blue atmosphere entirely, so instead the fade distance grows with
+        // altitude: a real, gradual blue haze at the horizon in every mode, never a blanket.
+        const float MAP_SCALE = 3.3333;           // 1600 km / 480 km
+        float camAltKm = cameraPosition.y * 0.001;
+        float hazeScale = max(MAP_SCALE, camAltKm / 40.0);
+        float blueStartKm = mix(28.0, 18.0, coldAirFactor) * hazeScale;
+        float blueFullKm  = mix(125.0, 92.0, coldAirFactor) * hazeScale;
+        float rayleighBlueAmount = smoothstep(blueStartKm, blueFullKm, distKm)
+                                 * mix(0.58, 0.78, coldAirFactor)
+                                 * 0.85;
 
         // Preserve 3D mountain ridge relief details even inside distant blue mountains!
         vec3 coldMountainBlue = vec3(0.22, 0.52, 0.90) * (0.78 + 0.34 * ridgeDetailContrast);

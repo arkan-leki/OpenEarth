@@ -12,30 +12,95 @@
 import * as THREE from 'three';
 import { Landmark } from '../types';
 
-export const DOMAIN_WIDTH_METERS = 480000;  // 480 km in world units (East Syria/Turkey to West Iran)
-export const DOMAIN_HEIGHT_METERS = 320000; // 320 km in world units (Lake Van/Diyarbakır to Ilam/Kalar)
-export const HALF_DOMAIN_WIDTH = DOMAIN_WIDTH_METERS / 2;   // 240000 m
-export const HALF_DOMAIN_HEIGHT = DOMAIN_HEIGHT_METERS / 2; // 160000 m
+export const DOMAIN_WIDTH_METERS = 1600000;  // 1600 km across: an 800 km-radius circle around Erbil
+export const DOMAIN_HEIGHT_METERS = 1600000; // 1600 km tall (square domain containing the circle)
+/**
+ * The rendered map is a CIRCLE of this radius centred on the domain, not the full square.
+ * The square bounding box exists only because the DEM and imagery are stored as a grid.
+ */
+export const MAP_RADIUS_METERS = 800000;
+
+/**
+ * Map edge shape: a rounded square (superellipse), not a rectangle and not a circle.
+ *
+ *   |x/HALF|^N + |z/HALF|^N = 1
+ *
+ * N = 2 gives an ellipse/circle (which threw away 21.5% of the domain in the corners).
+ * N = 4 gives a squircle: the corners are rounded off but ~92% of the domain still renders,
+ * so we get the soft edge without paying the circle's waste. Larger N approaches a rectangle.
+ */
+export const MAP_EDGE_EXPONENT = 2;
+
+/** Normalised superellipse radius: 1.0 exactly on the map edge, <1 inside. */
+export function mapEdgeDistance(worldX: number, worldZ: number): number {
+  const ax = Math.abs(worldX) / HALF_DOMAIN_WIDTH;
+  const az = Math.abs(worldZ) / HALF_DOMAIN_HEIGHT;
+  return Math.pow(Math.pow(ax, MAP_EDGE_EXPONENT) + Math.pow(az, MAP_EDGE_EXPONENT), 1 / MAP_EDGE_EXPONENT);
+}
+
+/** Fraction of the shape's radius over which terrain fades to sea level at the edge. */
+export const EDGE_TAPER_FRACTION = 0.06;
+
+/**
+ * Elevation floor. The old value (160 m) flattened real depressions; the Dead Sea shore sits
+ * at -430 m and is inside this map. Kept above the subterranean crust slab top (-500 m).
+ */
+export const MIN_TERRAIN_ELEVATION_M = -440;
+
+/** Width of the fade band, in metres, over which terrain meets sea level at the map rim. */
+export const RIM_TAPER_METERS = 60000;
+
+/**
+ * Converts a chunk's world rectangle into geographic bounds, so per-chunk satellite imagery
+ * can be requested from its exact bounding box at full sensor resolution.
+ */
+export function worldRectToLonLatBounds(
+  gridX: number,
+  gridY: number,
+  widthMeters: number,
+  heightMeters: number
+): { minLon: number; maxLon: number; minLat: number; maxLat: number } {
+  const lonAt = (x: number) => MIN_LON + (x / DOMAIN_WIDTH_METERS + 0.5) * (MAX_LON - MIN_LON);
+  const latAt = (z: number) => MAX_LAT - (z / DOMAIN_HEIGHT_METERS + 0.5) * (MAX_LAT - MIN_LAT);
+  return {
+    minLon: lonAt(gridX - widthMeters / 2),
+    maxLon: lonAt(gridX + widthMeters / 2),
+    // +z is south, so the NORTH edge comes from the smaller z.
+    minLat: latAt(gridY + heightMeters / 2),
+    maxLat: latAt(gridY - heightMeters / 2)
+  };
+}
+
+/** True when a world-space point lies inside the rendered circle. */
+export function isInsideMapCircle(worldX: number, worldZ: number, marginMeters = 0): boolean {
+  const r = MAP_RADIUS_METERS + marginMeters;
+  return worldX * worldX + worldZ * worldZ <= r * r;
+}
+
+export const HALF_DOMAIN_WIDTH = DOMAIN_WIDTH_METERS / 2;   // 800000 m
+export const HALF_DOMAIN_HEIGHT = DOMAIN_HEIGHT_METERS / 2; // 800000 m
 
 // Backward compatibility aliases
 export const DOMAIN_SIZE_METERS = DOMAIN_WIDTH_METERS;
 export const HALF_DOMAIN = HALF_DOMAIN_WIDTH;
 
 // Spherical Earth Globe curvature divisor:
-// Drop = -d^2 / 5,500,000 -> -454m at 50km (land horizon), -1,818m at 100km (mountain horizon)
-export const EARTH_CURVATURE_DIVISOR = 5500000.0;
+// Drop = -d^2 / (2R) with R = 6371 km. At 50 km: -196 m. At 800 km (map edge): -50 km.
+// The previous divisor (5,500,000) exaggerated curvature 2.3x, which made a 1600 km map sag
+// 116 km at its rim instead of the correct 50 km.
+export const EARTH_CURVATURE_DIVISOR = 12742000.0;
 
-export const DEM_WIDTH = 1280;
-export const DEM_HEIGHT = 1024;
+export const DEM_WIDTH = 4096;
+export const DEM_HEIGHT = 4096;
 
 // Exact bounding box of the NASA VIIRS / SRTM DEM zoom 8 tiles covering
 // East Syria (40.78°E), East Turkey (37.72°N), North Iraq, and West Iran (47.81°E)
-export const MIN_LON = 40.78125;
-export const MAX_LON = 47.8125;
-export const MIN_LAT = 33.137551;
-export const MAX_LAT = 37.718590;
+export const MIN_LON = 35.10439430714793;
+export const MAX_LON = 52.91360569285207;
+export const MIN_LAT = 28.956026136343084;
+export const MAX_LAT = 43.42597386365692;
 
-// In-memory cache of decoded 1280x1024 real DEM Int16Array
+// In-memory cache of the decoded 4096x4096 real DEM Int16Array
 let cachedDemData: Int16Array | null = null;
 let demLoadPromise: Promise<Int16Array | null> | null = null;
 
@@ -43,7 +108,7 @@ export function loadRealDemData(): Promise<Int16Array | null> {
   if (cachedDemData) return Promise.resolve(cachedDemData);
   if (demLoadPromise) return demLoadPromise;
 
-  demLoadPromise = fetch('/data/north_iraq_dem_1280x1024.bin')
+  demLoadPromise = fetch('/data/erbil_map_dem.bin')
     .then((res) => {
       if (!res.ok) throw new Error('Failed to load regional DEM binary');
       return res.arrayBuffer();
@@ -183,7 +248,7 @@ export function getRealKurdistanElevation(worldX: number, worldZ: number): numbe
     const bottom = e01 * (1 - sfx) + e11 * sfx;
     const rawElevation = top * (1 - sfy) + bottom * sfy;
 
-    return Math.max(160, rawElevation);
+    return Math.max(MIN_TERRAIN_ELEVATION_M, rawElevation);
   }
 
   return getAnalyticalKurdistanElevation(worldX, worldZ);
@@ -208,14 +273,14 @@ export function getKurdistanSatelliteTexture(type: 'nasa' | 'hd' = 'hd'): THREE.
   if (type === 'hd') {
     if (!hdTexture) {
       hdTexture = loader.load(
-        '/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd',
+        '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
         (tex) => {
           tex.colorSpace = THREE.SRGBColorSpace;
           tex.needsUpdate = true;
         },
         undefined,
         () => {
-          hdTexture = loader.load('/tiles/sulaymaniyah_satellite_hd.jpg?v=kurdistan_hd');
+          console.warn('Erbil HD base map missing — run scripts/build_erbil_map_assets.cjs');
         }
       );
       hdTexture.colorSpace = THREE.SRGBColorSpace;
@@ -230,14 +295,14 @@ export function getKurdistanSatelliteTexture(type: 'nasa' | 'hd' = 'hd'): THREE.
 
   if (!nasaTexture) {
     nasaTexture = loader.load(
-      '/tiles/north_iraq_nasa_satellite.jpg?v=kurdistan_nasa',
+      '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.needsUpdate = true;
       },
       undefined,
       () => {
-        nasaTexture = loader.load('/tiles/sulaymaniyah_satellite.jpg?v=kurdistan_nasa');
+        nasaTexture = loader.load('/tiles/erbil_map_hd.jpg?v=erbil_map_hd');
       }
     );
     nasaTexture.colorSpace = THREE.SRGBColorSpace;
@@ -287,13 +352,39 @@ export function buildRealChunkGeometry(
     const worldZ = gridY + localZ;
 
     const elevMeters = getRealKurdistanElevation(worldX, worldZ);
-    posAttr.setY(i, elevMeters * terrainExaggeration);
 
-    // Geographic UV: global mapping across the whole 480km x 320km domain
-    const globalU = (worldX + HALF_DOMAIN_WIDTH) / DOMAIN_WIDTH_METERS;
-    const globalV = 1.0 - (worldZ + HALF_DOMAIN_HEIGHT) / DOMAIN_HEIGHT_METERS;
+    // Fade elevation down to sea level over the last few percent before the rounded edge, so
+    // the map finishes in a smooth curved rim rather than a cliff.
+    const edgeDist = mapEdgeDistance(worldX, worldZ);
+    const rimFade = 1 - THREE.MathUtils.smoothstep(edgeDist, 1 - EDGE_TAPER_FRACTION, 1);
 
-    uvAttr.setXY(i, Math.max(0, Math.min(1, globalU)), Math.max(0, Math.min(1, globalV)));
+    posAttr.setY(i, elevMeters * terrainExaggeration * rimFade);
+
+    // LOCAL UV, 0..1 within THIS chunk, because every chunk now carries its own
+    // high-resolution imagery tile and is rendered with it separately. The previous
+    // global UV meant all 16 chunks shared one 4096px image stretched over the whole
+    // map, which is what cost the ground detail.
+    const u = (localX + chunkWidth / 2) / chunkWidth;
+    const v = (chunkHeight / 2 - localZ) / chunkHeight; // v = 1 at the north edge
+
+    uvAttr.setXY(i, Math.max(0, Math.min(1, u)), Math.max(0, Math.min(1, v)));
+  }
+
+  // Drop every triangle whose centre falls outside the circle. Vertices are left in place
+  // (harmless: unreferenced) so the index stays simple and the buffer layout is unchanged.
+  const index = geom.getIndex();
+  if (index) {
+    const src = index.array;
+    const kept: number[] = [];
+    for (let t = 0; t < src.length; t += 3) {
+      const a = src[t];
+      const b = src[t + 1];
+      const c = src[t + 2];
+      const cx = (posAttr.getX(a) + posAttr.getX(b) + posAttr.getX(c)) / 3 + gridX;
+      const cz = (posAttr.getZ(a) + posAttr.getZ(b) + posAttr.getZ(c)) / 3 + gridY;
+      if (mapEdgeDistance(cx, cz) <= 1) kept.push(a, b, c);
+    }
+    geom.setIndex(kept);
   }
 
   geom.computeVertexNormals();
@@ -373,7 +464,42 @@ export const KURDISTAN_LANDMARKS: Landmark[] = [
   makeLandmark('kermanshah', 'Kermanshah & Taq-e Bostan (کرماشان)', 'West Iran • Mount Bisotun & Zagros Cliffs • 1,350 m', 47.0600, 34.3100, 1350, 'city', 'west_iran'),
   makeLandmark('marivan', 'Marivan & Lake Zarivar (مەریوان)', 'West Iran • Alpine Lake & Hawraman East • 1,285 m', 46.1700, 35.5200, 1285, 'water', 'west_iran'),
   makeLandmark('piranshahr', 'Piranshahr & Sardasht (پیرانشار)', 'West Iran • Little Zab Headwaters & Gorges • 1,450 m', 45.1400, 36.6900, 1450, 'mountain', 'west_iran'),
-  makeLandmark('ilam', 'Ilam & Kabir Kuh (ئیلام)', 'West Iran • Southern Zagros Oak Highlands • 1,387 m', 46.4200, 33.6300, 1387, 'mountain', 'west_iran')
+  makeLandmark('ilam', 'Ilam & Kabir Kuh (ئیلام)', 'West Iran • Southern Zagros Oak Highlands • 1,387 m', 46.4200, 33.6300, 1387, 'mountain', 'west_iran'),
+
+  // ================= SOUTHERN IRAQ (MESOPOTAMIA) =================
+  makeLandmark('baghdad', 'Baghdad (بەغدا)', 'South Iraq • Tigris River & Abbasid Capital • 34 m', 44.3610, 33.3150, 34, 'city', 'south_iraq'),
+  makeLandmark('basra', 'Basra (بەسرە)', 'South Iraq • Shatt al-Arab Waterway • 5 m', 47.7830, 30.5080, 5, 'city', 'south_iraq'),
+  makeLandmark('najaf', 'Najaf (نەجەف)', 'South Iraq • Imam Ali Shrine & Desert Plateau • 60 m', 44.3140, 32.0000, 60, 'city', 'south_iraq'),
+  makeLandmark('karbala', 'Karbala (کەربەلا)', 'South Iraq • Shrine City on the Desert Edge • 40 m', 44.0240, 32.6160, 40, 'city', 'south_iraq'),
+  makeLandmark('samarra', 'Samarra & Malwiya (سامەڕا)', 'South Iraq • Spiral Minaret & Tigris Bluffs • 75 m', 43.8760, 34.1980, 75, 'city', 'south_iraq'),
+  makeLandmark('tharthar', 'Lake Tharthar (دەریاچەی سەرسار)', 'South Iraq • Vast Desert Depression Lake • 60 m', 43.2000, 34.0000, 60, 'water', 'south_iraq'),
+  makeLandmark('ammar', 'Amarah & the Marshes (عەمارە)', 'South Iraq • Mesopotamian Marshlands • 10 m', 47.1450, 31.8350, 10, 'water', 'south_iraq'),
+
+  // ================= THE LEVANT =================
+  makeLandmark('damascus', 'Damascus (دیمەشق)', 'Levant • Oldest Inhabited Capital on Earth • 680 m', 36.2920, 33.5130, 680, 'city', 'levant'),
+  makeLandmark('aleppo', 'Aleppo (حەلەب)', 'Levant • Ancient Citadel & Silk Road Hub • 390 m', 37.1620, 36.2020, 390, 'city', 'levant'),
+  makeLandmark('beirut', 'Beirut (بەیروت)', 'Levant • Mediterranean Harbour & Mount Lebanon • 30 m', 35.5010, 33.8930, 30, 'city', 'levant'),
+  makeLandmark('amman', 'Amman (عەممان)', 'Levant • Citadel Hill & Jordan Plateau • 900 m', 35.9100, 31.9560, 900, 'city', 'levant'),
+  makeLandmark('jerusalem', 'Jerusalem (قودس)', 'Levant • Old City & Judaean Hills • 754 m', 35.2140, 31.7680, 754, 'city', 'levant'),
+  makeLandmark('palmyra', 'Palmyra / Tadmur (تەدمور)', 'Levant • Desert Oasis Ruins • 380 m', 38.2840, 34.5520, 380, 'city', 'levant'),
+  makeLandmark('deadsea', 'The Dead Sea (دەریای مردوو)', 'Levant • Lowest Land Point on Earth • -430 m', 35.5000, 31.5000, -430, 'water', 'levant'),
+
+  // ================= CAUCASUS & CASPIAN =================
+  makeLandmark('baku', 'Baku (باکو)', 'Caucasus • Absheron Peninsula on the Caspian • -28 m', 49.8670, 40.4090, -28, 'city', 'caucasus'),
+  makeLandmark('tbilisi', 'Tbilisi (تبلیس)', 'Caucasus • Mtkvari River & Caucasus Foothills • 450 m', 44.8270, 41.7160, 450, 'city', 'caucasus'),
+  makeLandmark('yerevan', 'Yerevan (یەریڤان)', 'Caucasus • Ararat Plain • 990 m', 44.5130, 40.1790, 990, 'city', 'caucasus'),
+  makeLandmark('ararat', 'Mount Ararat (ئارارات)', 'Caucasus • 5,137 m Volcanic Massif', 44.2980, 39.7020, 5137, 'mountain', 'caucasus'),
+  makeLandmark('sevan', 'Lake Sevan (دەریاچەی سێڤان)', 'Caucasus • High Alpine Lake • 1,900 m', 45.3000, 40.3000, 1900, 'water', 'caucasus'),
+
+  // ================= CENTRAL IRAN & ADDITIONS =================
+  makeLandmark('tehran', 'Tehran (تاران)', 'West Iran • Alborz Foothills Capital • 1,200 m', 51.3890, 35.6890, 1200, 'city', 'west_iran'),
+  makeLandmark('tabriz', 'Tabriz (تەورێز)', 'West Iran • Sahand Slopes & Silk Road • 1,350 m', 46.2920, 38.0800, 1350, 'city', 'west_iran'),
+  makeLandmark('damavand', 'Mount Damavand (دەماوەند)', 'West Iran • Highest Peak in the Middle East • 5,610 m', 52.1100, 35.9550, 5610, 'mountain', 'west_iran'),
+  makeLandmark('van', 'Lake Van (دەریاچەی وان)', 'East Turkey • Largest Lake in Turkey • 1,640 m', 43.0000, 38.6000, 1640, 'water', 'east_turkey'),
+  makeLandmark('cukurca', 'Hakkari & Cilo-Sat (Colemêrg)', 'East Turkey • Deepest Alpine Gorges • 1,700 m', 43.7400, 37.5750, 1700, 'mountain', 'east_turkey'),
+  makeLandmark('cizre', 'Cizre & Tigris Border (Cizîr)', 'East Turkey • Tigris Crossing into Syria • 380 m', 42.1900, 37.3300, 380, 'city', 'east_turkey'),
+  makeLandmark('raqqa', 'Raqqa (ڕەققە)', 'East Syria • Euphrates Valley • 250 m', 39.0100, 35.9500, 250, 'city', 'east_syria'),
+  makeLandmark('deirezzor', 'Deir ez-Zor (دێرەزوور)', 'East Syria • Euphrates Oasis • 210 m', 40.1400, 35.3330, 210, 'city', 'east_syria')
 ];
 
 /**

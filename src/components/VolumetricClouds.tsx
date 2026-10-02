@@ -6,6 +6,12 @@ import { CloudShader } from '../shaders/cloudShader';
 import { ShaderParameters } from '../types';
 import { CloudClassification } from '../services/cloudClassificationService';
 import { SunPositionResult } from '../utils/sunPosition';
+import {
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT
+} from '../utils/realSulaymaniyahTerrain';
 
 interface VolumetricCloudsProps {
   weatherTexture: THREE.Texture;
@@ -45,8 +51,12 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
       uSunDir: { value: new THREE.Vector3(0.55, 0.78, 0.28).normalize() },
       uSunColor: { value: new THREE.Color('#fffbf0') },
       uSkyColor: { value: new THREE.Color('#3b82f6') },
-      uBoxMin: { value: new THREE.Vector3(-240000, baseAltitudeM - 11500, -160000) },
-      uBoxMax: { value: new THREE.Vector3(240000, topAltitudeM + 200, 160000) },
+      // Sized from the domain constants, not hardcoded: the old fixed box (-240000..240000)
+      // only covered the centre of the map, so clouds never reached the edges.
+      uBoxMin: { value: new THREE.Vector3(-HALF_DOMAIN_WIDTH, baseAltitudeM - 11500, -HALF_DOMAIN_HEIGHT) },
+      uBoxMax: { value: new THREE.Vector3(HALF_DOMAIN_WIDTH, topAltitudeM + 200, HALF_DOMAIN_HEIGHT) },
+      uDomainMinXZ: { value: new THREE.Vector2(-HALF_DOMAIN_WIDTH, -HALF_DOMAIN_HEIGHT) },
+      uDomainSizeXZ: { value: new THREE.Vector2(DOMAIN_WIDTH_METERS, DOMAIN_HEIGHT_METERS) },
       uCloudBaseY: { value: baseAltitudeM },
       uCloudTopY: { value: topAltitudeM },
       uGlobeRefXZ: { value: new THREE.Vector2(globeRefXZ[0], globeRefXZ[1]) },
@@ -208,7 +218,7 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
 
   return (
     <mesh ref={meshRef} position={[0, boxCenterY, 0]} frustumCulled={false}>
-      <boxGeometry args={[480000, boxHeight, 320000]} />
+      <boxGeometry args={[DOMAIN_WIDTH_METERS, boxHeight, DOMAIN_HEIGHT_METERS]} />
       <shaderMaterial
         ref={shaderMatRef}
         uniforms={uniforms}

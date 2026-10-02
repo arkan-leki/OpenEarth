@@ -148,7 +148,7 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
         setImageLoading(false);
         setImageLoadError(true);
       };
-      img.src = '/tiles/north_iraq_hd_satellite.jpg?v=kurdistan_hd';
+      img.src = '/tiles/erbil_map_hd.jpg?v=erbil_map_hd';
       return;
     }
 

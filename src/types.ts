@@ -11,6 +11,12 @@ export interface GridChunkData {
   label: string;
   gridX: number;
   gridY: number;
+  /** Chunk extent. Chunks are NON-UNIFORM: small and fine near the centre,
+   *  large and coarse at the rim, so detail is spent where it is looked at. */
+  widthMeters?: number;
+  heightMeters?: number;
+  /** Mesh subdivisions for this chunk, chosen to hit a target vertex spacing. */
+  subdivisions?: number;
   condition: WeatherCondition;
   badge?: string;
   cloudDensity: number; // 0.0 - 1.0
@@ -29,7 +35,14 @@ export interface Landmark {
   lon?: number;
   lat?: number;
   elevationM?: number;
-  region?: 'north_iraq' | 'east_turkey' | 'east_syria' | 'west_iran';
+  region?:
+    | 'north_iraq'
+    | 'south_iraq'
+    | 'east_turkey'
+    | 'east_syria'
+    | 'west_iran'
+    | 'levant'
+    | 'caucasus';
   position: [number, number, number];
   type: 'city' | 'water' | 'mountain' | 'weather' | 'border';
   cameraTarget?: [number, number, number];

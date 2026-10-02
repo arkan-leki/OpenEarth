@@ -28,8 +28,8 @@ export const SpatialGridManager: React.FC<SpatialGridManagerProps> = ({
   const selectedChunk = chunks.find(c => c.id === selectedChunkId) || chunks[0] || null;
 
   const bgImage = satelliteLayer === 'hd'
-    ? '/tiles/north_iraq_hd_satellite.jpg'
-    : '/tiles/north_iraq_nasa_satellite.jpg';
+    ? '/tiles/erbil_map_hd.jpg'
+    : '/tiles/erbil_map_hd.jpg';
 
   const getWeatherIcon = (cond: string) => {
     switch (cond) {

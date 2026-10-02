@@ -146,10 +146,10 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-xs sm:text-sm font-bold tracking-wide text-white">N. IRAQ • E. TURKEY • E. SYRIA • W. IRAN</span>
+            <span className="text-xs sm:text-sm font-bold tracking-wide text-white">KURDISTAN • IRAQ • SYRIA • TURKEY • IRAN</span>
             <span className="flex items-center gap-1 text-[9px] sm:text-[10px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/25 text-emerald-300 font-bold border border-emerald-500/40">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-              3D GLOBE
+              800 KM RADIUS
             </span>
           </div>
           <div className="flex items-center gap-2 text-[10px] sm:text-[11px] font-mono text-slate-300">

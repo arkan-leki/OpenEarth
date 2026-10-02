@@ -22,8 +22,12 @@ export const CloudShader = {
     uSunDir: { value: new THREE.Vector3(0.5, 0.8, 0.3).normalize() },
     uSunColor: { value: new THREE.Color('#fff9ee') },
     uSkyColor: { value: new THREE.Color('#3b82f6') },
-    uBoxMin: { value: new THREE.Vector3(-240000, -8100, -160000) },
-    uBoxMax: { value: new THREE.Vector3(240000, 5400, 160000) },
+    uBoxMin: { value: new THREE.Vector3(-800000, -8100, -800000) },
+    uBoxMax: { value: new THREE.Vector3(800000, 5400, 800000) },
+    // Weather-texture UV mapping. Supplied as uniforms so the cloud field can be
+    // sampled per chunk as well as domain-wide.
+    uDomainMinXZ: { value: new THREE.Vector2(-800000, -800000) },
+    uDomainSizeXZ: { value: new THREE.Vector2(1600000, 1600000) },
     uCloudBaseY: { value: 3400.0 },
     uCloudTopY: { value: 5200.0 },
     uGlobeRefXZ: { value: new THREE.Vector2(0.0, 0.0) },
@@ -65,6 +69,8 @@ export const CloudShader = {
     uniform vec3 uSkyColor;
     uniform vec3 uBoxMin;
     uniform vec3 uBoxMax;
+    uniform vec2 uDomainMinXZ;
+    uniform vec2 uDomainSizeXZ;
     uniform float uCloudBaseY;
     uniform float uCloudTopY;
     uniform vec2 uGlobeRefXZ;
@@ -168,38 +174,27 @@ export const CloudShader = {
     // Spherical Earth Globe curvature drop (-454m at 50km, -1,818m at 100km)
     float getGlobeDrop(vec2 xz) {
       vec2 d = xz - uGlobeRefXZ;
-      return -dot(d, d) / 5500000.0;
+      return -dot(d, d) / 12742000.0;  // real Earth: d^2 / (2R)
     }
 
     vec2 getSatelliteUV(vec2 worldXZ) {
       vec2 dynamicDrift = uWindDir * (uTime * uWindSpeed * 3.5);
       vec2 pos = worldXZ - (uPredictedOffset + dynamicDrift);
-      vec2 uv = vec2(
-        (pos.x + 240000.0) / 480000.0,
-        (pos.y + 160000.0) / 320000.0
-      );
+      // Domain-relative, from uniforms. This was hardcoded to the old 480x320 km map, so on
+      // the 1600 km map every sample outside +/-240 km clamped to a single edge texel and the
+      // cloud field was effectively blank everywhere except the centre.
+      vec2 uv = (pos - uDomainMinXZ) / uDomainSizeXZ;
       return clamp(uv, 0.001, 0.999);
     }
 
+    // SHARP sample. This used to be a weighted 3x3 blur (centre 0.36, neighbours 0.11,
+    // diagonals 0.05) with a texel size hardcoded as 1.5/1024. On a 512px texture spanning
+    // 1600 km one texel is 3,125 m, so every lookup averaged away roughly 9 km of cloud:
+    // small clouds disappeared entirely and small gaps between clouds were filled in.
+    // That is precisely what made the cloud layer look like a flat sheet.
     vec4 sampleWeatherSmooth(vec2 worldXZ) {
       vec2 uv = getSatelliteUV(worldXZ);
-      vec2 texel = vec2(1.5 / 1024.0);
-      vec4 c0 = texture2D(uWeatherData, uv) * 0.36;
-      vec4 c1 = texture2D(uWeatherData, clamp(uv + vec2( texel.x,  0.0), 0.001, 0.999)) * 0.11;
-      vec4 c2 = texture2D(uWeatherData, clamp(uv + vec2(-texel.x,  0.0), 0.001, 0.999)) * 0.11;
-      vec4 c3 = texture2D(uWeatherData, clamp(uv + vec2( 0.0,  texel.y), 0.001, 0.999)) * 0.11;
-      vec4 c4 = texture2D(uWeatherData, clamp(uv + vec2( 0.0, -texel.y), 0.001, 0.999)) * 0.11;
-      vec4 c5 = texture2D(uWeatherData, clamp(uv + vec2( texel.x,  texel.y), 0.001, 0.999)) * 0.05;
-      vec4 c6 = texture2D(uWeatherData, clamp(uv + vec2(-texel.x,  texel.y), 0.001, 0.999)) * 0.05;
-      vec4 c7 = texture2D(uWeatherData, clamp(uv + vec2( texel.x, -texel.y), 0.001, 0.999)) * 0.05;
-      vec4 c8 = texture2D(uWeatherData, clamp(uv + vec2(-texel.x, -texel.y), 0.001, 0.999)) * 0.05;
-
-      vec4 res = c0 + c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8;
-      float prog = clamp(uTransitionProgress, 0.0, 1.0);
-      res.r *= prog;
-      res.g *= prog;
-      res.a *= prog;
-      return res;
+      return texture2D(uWeatherData, uv);
     }
 
     float dualLobePhaseHG(float cosTheta, float gForward, float gBackward, float forwardWeight) {
@@ -234,7 +229,7 @@ export const CloudShader = {
       if (h < 0.0 || h > 1.0) return 0.0;
       relativeAltitude = h;
 
-      vec2 distXZ = abs(p.xz) / vec2(240000.0, 160000.0);
+      vec2 distXZ = abs(p.xz) / (uDomainSizeXZ * 0.5);
       float boxFalloff = smoothstep(1.0, 0.90, distXZ.x) * smoothstep(1.0, 0.90, distXZ.y);
       if (boxFalloff <= 0.001) return 0.0;
 
@@ -349,12 +344,27 @@ export const CloudShader = {
       }
 
       float tNear = max(0.0, hit.x);
-      float tFar = min(hit.y, 440000.0);
+      // March distance. This was a hardcoded 440 km, sized for the original 480x320 km map
+      // where it covered the whole domain. On the 1600 km map it capped clouds to a 440 km
+      // radius around the camera, so sky clouds only appeared over the central region no
+      // matter how much cloud the density data held (measured: outer bands carry 15.2% cloud
+      // vs 9.7% in the centre, yet none of it rendered).
+      // 440 km was the original cap, sized for the 480 km map - it confined clouds to the
+      // central region. Marching the full 1600 km domain with enough samples to resolve a
+      // 1.8 km slab dropped the frame rate to 1.2 fps, so the march is capped at 60% of the
+      // domain: clouds now reach well past the old limit without the full-domain cost.
+      // 440 km was the original cap, sized for the 480 km map - it confined clouds to the
+      // central region. Marching the full 1600 km domain with enough samples to resolve a
+      // 1.8 km slab dropped the frame rate to 1.2 fps, so the march is capped at 60% of the
+      // domain: clouds now reach well past the old limit without the full-domain cost.
+      float tFar = min(hit.y, uDomainSizeXZ.x * 0.60);
       if (tNear >= tFar) {
         discard;
       }
 
-      int steps = clamp(uSteps, 32, 68);
+      // Was clamped to 68, which silently ignored raymarchSteps settings above that.
+      // Longer marches need more samples to resolve the cloud slab.
+      int steps = clamp(uSteps, 32, 96);
       float stepSize = (tFar - tNear) / float(steps);
 
       float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);

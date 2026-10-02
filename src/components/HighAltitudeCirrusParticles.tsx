@@ -4,6 +4,12 @@ import * as THREE from 'three';
 import gsap from 'gsap';
 import { ClusteredCumulusBillboardShader } from '../shaders/cirrusParticleShader';
 import { SunPositionResult } from '../utils/sunPosition';
+import {
+  DOMAIN_WIDTH_METERS,
+  DOMAIN_HEIGHT_METERS,
+  HALF_DOMAIN_WIDTH,
+  HALF_DOMAIN_HEIGHT
+} from '../utils/realSulaymaniyahTerrain';
 
 interface HighAltitudeCirrusParticlesProps {
   weatherTexture: THREE.Texture;
@@ -84,8 +90,9 @@ export const HighAltitudeCirrusParticles: React.FC<HighAltitudeCirrusParticlesPr
         const jitterZ = (nextRand() - 0.5) * 4800;
         const hNorm = nextRand();
 
-        const worldX = cell.u * 480000 - 240000 + jitterX;
-        const worldZ = cell.v * 320000 - 160000 + jitterZ;
+        // Spread across the whole domain, not the old 480x320 km centre.
+        const worldX = cell.u * DOMAIN_WIDTH_METERS - HALF_DOMAIN_WIDTH + jitterX;
+        const worldZ = cell.v * DOMAIN_HEIGHT_METERS - HALF_DOMAIN_HEIGHT + jitterZ;
         const relY = 200 + hNorm * (650 + cell.strength * 450);
 
         origins[i * 3] = worldX;

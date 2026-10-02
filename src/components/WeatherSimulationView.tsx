@@ -11,6 +11,7 @@ import { RainParticles } from './RainParticles';
 import { LandmarkPins, Landmark } from './LandmarkPins';
 import { AtmosphericFogAndDust } from './AtmosphericFogAndDust';
 import { AtmosphericSkyDome } from './AtmosphericSkyDome';
+import { PlanetaryCrustBase } from './PlanetaryCrustBase';
 import { GridChunkData, ShaderParameters } from '../types';
 import { CloudClassification, CLOUD_PROFILES } from '../services/cloudClassificationService';
 import { SunPositionResult } from '../utils/sunPosition';
@@ -116,6 +117,8 @@ interface SceneContentProps {
   nasaCloudTexture?: THREE.Texture | null;
   phenomenaTexture?: THREE.Texture | null;
   groundTexture?: THREE.Texture | null;
+  /** Per-chunk satellite imagery, keyed by chunk id. */
+  chunkSatelliteTextures?: Map<string, THREE.Texture> | null;
   sunPosition?: SunPositionResult;
   onSelectLandmark: (lm: Landmark) => void;
   targetCameraPose: { pos: [number, number, number]; target: [number, number, number] } | null;
@@ -143,6 +146,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
   hasActivePrecipitation = false,
   autoRotate,
   groundTexture,
+  chunkSatelliteTextures = null,
   phenomenaTexture,
   sunPosition,
   onSelectLandmark,
@@ -166,6 +170,16 @@ const SceneContent: React.FC<SceneContentProps> = ({
   }, [chunks, activeChunkIds]);
 
   const terrainExaggeration = shaderParams.terrainExaggeration ?? 1.35;
+
+  /**
+   * Cloud altitudes are used AS TUNED — no exaggeration applied.
+   *
+   * They were briefly multiplied by terrainExaggeration to lift them clear of 3.2x-inflated
+   * mountains, which shifted the real cloud base from ~2 km to ~7 km and broke levels that had
+   * been carefully calibrated. Terrain exaggeration is back at its original 1.35x, so the
+   * tuned altitudes are correct again without any scaling.
+   */
+  const cloudClassification = classification;
 
   // Reference apex of the spherical Earth Globe:
   // - In 360° Ground Spot Mode: centered on the observer's exact location so the Earth curves down
@@ -255,8 +269,12 @@ const SceneContent: React.FC<SceneContentProps> = ({
       }
       ctrl.update();
     } else {
-      camera.position.x = THREE.MathUtils.clamp(camera.position.x, -HALF_DOMAIN_WIDTH + 400, HALF_DOMAIN_WIDTH - 400);
-      camera.position.z = THREE.MathUtils.clamp(camera.position.z, -HALF_DOMAIN_HEIGHT + 400, HALF_DOMAIN_HEIGHT - 400);
+      // Widened to twice the domain: the old clamp pinned the camera inside a 480 km box,
+      // which crops a 1600 km map that must be viewed from outside it.
+      const ORBIT_LIMIT_X = HALF_DOMAIN_WIDTH * 2;
+      const ORBIT_LIMIT_Z = HALF_DOMAIN_HEIGHT * 2;
+      camera.position.x = THREE.MathUtils.clamp(camera.position.x, -ORBIT_LIMIT_X, ORBIT_LIMIT_X);
+      camera.position.z = THREE.MathUtils.clamp(camera.position.z, -ORBIT_LIMIT_Z, ORBIT_LIMIT_Z);
       ctrl.target.x = THREE.MathUtils.clamp(ctrl.target.x, -HALF_DOMAIN_WIDTH + 400, HALF_DOMAIN_WIDTH - 400);
       ctrl.target.z = THREE.MathUtils.clamp(ctrl.target.z, -HALF_DOMAIN_HEIGHT + 400, HALF_DOMAIN_HEIGHT - 400);
 
@@ -308,11 +326,11 @@ const SceneContent: React.FC<SceneContentProps> = ({
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
         shadow-camera-near={1000}
-        shadow-camera-far={620000}
-        shadow-camera-left={-250000}
-        shadow-camera-right={250000}
-        shadow-camera-top={180000}
-        shadow-camera-bottom={-180000}
+        shadow-camera-far={3200000}
+        shadow-camera-left={-900000}
+        shadow-camera-right={900000}
+        shadow-camera-top={900000}
+        shadow-camera-bottom={-900000}
         shadow-bias={-0.0002}
         shadow-normalBias={0.04}
       />
@@ -328,13 +346,13 @@ const SceneContent: React.FC<SceneContentProps> = ({
         <CloudShadowDepthProjector
           weatherTexture={weatherTexture}
           sunPosition={sunPosition}
-          classification={classification}
+          classification={cloudClassification}
           shaderParams={shaderParams}
           onShadowBufferReady={setCloudShadowDepthTexture}
         />
       )}
 
-      {/* 1. SPATIAL CHUNKING: Solid 480km x 320km Curved Earth Globe Terrain (East Turkey, East Syria, North Iraq, West Iran) */}
+      {/* 1. SPATIAL CHUNKING: solid 1600 km circular Earth map, 800 km radius around Erbil */}
       <group onDoubleClick={handleTerrainDoubleClick}>
         {activeChunksToRender.map((chunk) => (
           <TerrainChunk
@@ -342,6 +360,10 @@ const SceneContent: React.FC<SceneContentProps> = ({
             id={chunk.id}
             gridX={chunk.gridX}
             gridY={chunk.gridY}
+            widthMeters={chunk.widthMeters}
+            heightMeters={chunk.heightMeters}
+            subdivisions={chunk.subdivisions}
+            chunkSatelliteTexture={chunkSatelliteTextures?.get(chunk.id) ?? null}
             wireframe={wireframe}
             isSelected={selectedChunkId === chunk.id}
             terrainExaggeration={terrainExaggeration}
@@ -349,18 +371,15 @@ const SceneContent: React.FC<SceneContentProps> = ({
             phenomenaTexture={phenomenaTexture}
             weatherTexture={weatherTexture}
             cloudShadowDepthTexture={showClouds ? cloudShadowDepthTexture : null}
-            cloudBaseY={classification.baseAltitudeM}
-            cloudTopY={classification.topAltitudeM}
+            cloudBaseY={cloudClassification?.baseAltitudeM}
+            cloudTopY={cloudClassification?.topAltitudeM}
             sunPosition={sunPosition}
             globeRefXZ={globeRefXZ}
           />
         ))}
 
-        {/* Solid Subterranean Planetary Crust Base beneath the curved globe domain */}
-        <mesh position={[0, -14500, 0]} receiveShadow={false}>
-          <boxGeometry args={[480000, 14000, 320000]} />
-          <meshStandardMaterial color="#162133" roughness={0.95} metalness={0.02} />
-        </mesh>
+        {/* Solid Subterranean Planetary Crust Base — circular and curvature-matched */}
+        <PlanetaryCrustBase />
       </group>
 
       {/* 1b. 3D Volumetric Valley Fog & Suspended Mesopotamian Desert Dust Plumes */}
@@ -378,7 +397,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
         <VolumetricClouds
           weatherTexture={weatherTexture}
           params={shaderParams}
-          classification={classification}
+          classification={cloudClassification}
           sunPosition={sunPosition}
           globeRefXZ={globeRefXZ}
         />
@@ -390,7 +409,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
           weatherTexture={weatherTexture}
           sunPosition={sunPosition}
           windSpeed={shaderParams.windSpeed}
-          cloudBaseY={classification.baseAltitudeM}
+          cloudBaseY={cloudClassification?.baseAltitudeM}
           visible={showClouds}
           globeRefXZ={globeRefXZ}
         />
@@ -405,7 +424,7 @@ const SceneContent: React.FC<SceneContentProps> = ({
           activeMaxPrecipitation={activeMaxPrecipitation}
           hasActivePrecipitation={hasActivePrecipitation}
           windSpeed={shaderParams.windSpeed}
-          cloudBaseY={classification.baseAltitudeM}
+          cloudBaseY={cloudClassification?.baseAltitudeM}
           globeRefXZ={globeRefXZ}
         />
       )}
@@ -431,8 +450,8 @@ const SceneContent: React.FC<SceneContentProps> = ({
         rotateSpeed={isGround360Mode ? -0.45 : 0.75}
         minPolarAngle={isGround360Mode ? Math.PI * 0.16 : 0.05}
         maxPolarAngle={isGround360Mode ? Math.PI * 0.82 : Math.PI / 2.06}
-        minDistance={isGround360Mode ? 2.0 : 400}
-        maxDistance={isGround360Mode ? 2.0 : 460000}
+        minDistance={isGround360Mode ? 2.0 : 3000}
+        maxDistance={isGround360Mode ? 2.0 : 2600000}
         enableDamping={true}
         dampingFactor={0.07}
       />
@@ -477,10 +496,11 @@ export const WeatherSimulationView: React.FC<WeatherSimulationViewProps> = (prop
         <Canvas
           shadows={false}
           camera={{
-            position: [0, 125000, 175000],
+            // Sized for the 1600 km circular map: ~1700 km out frames the whole circle.
+            position: [0, 1320000, 1100000],
             fov: 55,
-            near: 8,
-            far: 850000
+            near: 100,
+            far: 6000000
           }}
           gl={{
             antialias: true,
@@ -502,7 +522,7 @@ export const WeatherSimulationView: React.FC<WeatherSimulationViewProps> = (prop
           }}
         >
           <color attach="background" args={[props.sunPosition?.skyColor ?? '#1c64b8']} />
-          <fog attach="fog" args={[props.sunPosition?.fogColor ?? '#72b6fa', 120000, 520000]} />
+          <fog attach="fog" args={[props.sunPosition?.fogColor ?? '#72b6fa', 2400000, 6000000]} />
           <SceneContent {...props} />
         </Canvas>
       </WebGLErrorBoundary>
