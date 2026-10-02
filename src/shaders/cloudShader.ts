@@ -229,8 +229,10 @@ export const CloudShader = {
       if (h < 0.0 || h > 1.0) return 0.0;
       relativeAltitude = h;
 
-      vec2 distXZ = abs(p.xz) / (uDomainSizeXZ * 0.5);
-      float boxFalloff = smoothstep(1.0, 0.90, distXZ.x) * smoothstep(1.0, 0.90, distXZ.y);
+      // Circular fade-out so the cloud field ends at the same radius as the terrain
+      // rim fog (≈550–780 km). Per-axis fade left clouds hanging in the square corners.
+      float distFromCenter = length(p.xz) / (uDomainSizeXZ.x * 0.5);
+      float boxFalloff = 1.0 - smoothstep(0.68, 0.97, distFromCenter);
       if (boxFalloff <= 0.001) return 0.0;
 
       vec4 weather = sampleWeatherSmooth(p.xz);

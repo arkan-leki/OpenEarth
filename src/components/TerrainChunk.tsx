@@ -363,7 +363,17 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         vec3 warmHorizonBlue  = vec3(0.42, 0.70, 0.96) * (0.82 + 0.30 * ridgeDetailContrast);
         vec3 atmosphericBlueTarget = mix(warmHorizonBlue, coldMountainBlue, coldAirFactor);
 
-        diffuseColor.rgb = mix(diffuseColor.rgb, atmosphericBlueTarget, clamp(rayleighBlueAmount, 0.0, 0.82));`
+        diffuseColor.rgb = mix(diffuseColor.rgb, atmosphericBlueTarget, clamp(rayleighBlueAmount, 0.0, 0.82));
+
+        // RIM FOG — fade the outer ring into sky-blue haze instead of showing empty,
+        // cloudless terrain. The volumetric cloud raymarch can't span the whole 1600 km
+        // domain on real hardware, so land past the cloud edge is deliberately fogged out
+        // to read as distance/horizon. One smoothstep + one mix, no extra texture reads,
+        // so it costs almost nothing and keeps GPU budget for the fine central mesh.
+        float rimDistKm = length(vWorldPos.xz) * 0.001;
+        float rimFog = smoothstep(550.0, 780.0, rimDistKm);
+        vec3 rimFogColor = vec3(0.34, 0.60, 0.92);
+        diffuseColor.rgb = mix(diffuseColor.rgb, rimFogColor, rimFog);`
       );
     };
   }, []);
