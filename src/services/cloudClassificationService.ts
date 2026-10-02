@@ -1,5 +1,4 @@
-import { WeatherMode } from '../types';
-import { SulaymaniyahWeatherPayload } from './weatherService';
+import { KurdistanWeatherPayload } from './weatherService';
 
 export type CloudClassificationType =
   | 'cumulus_humilis'     // ☁️ Fair-Weather Cumulus (Flat base, rounded puffy cotton balls)
@@ -135,13 +134,13 @@ export const CLOUD_PROFILES: Record<CloudClassificationType, CloudClassification
  * Zagros ridges (~2,700m-3,400m scaled) so Low/Mid clouds sit ~1,200m-1,800m AGL (~4,000-6,000 ft AGL)
  * cleanly above the ridges without clipping into mountains or floating too high.
  */
-export function computeRealCloudBaseMeters(weatherPayload?: SulaymaniyahWeatherPayload | null): number {
+export function computeRealCloudBaseMeters(weatherPayload?: KurdistanWeatherPayload | null): number {
   if (!weatherPayload?.stations || weatherPayload.stations.length === 0) {
     return 3400;
   }
   const stations = weatherPayload.stations;
   const avgTemp = stations.reduce((acc, s) => acc + (s.temperature ?? 24), 0) / stations.length;
-  const avgRh = Math.max(15, Math.min(98, stations.reduce((acc, s) => acc + (s.humidity ?? 40), 0) / stations.length));
+  const avgRh = Math.max(15, Math.min(98, stations.reduce((acc, s) => acc + (s.relativeHumidity ?? 40), 0) / stations.length));
 
   // Magnus-Tetens dewpoint approximation
   const alpha = (17.27 * avgTemp) / (237.7 + avgTemp) + Math.log(avgRh / 100.0);
@@ -151,79 +150,4 @@ export function computeRealCloudBaseMeters(weatherPayload?: SulaymaniyahWeatherP
   const lclOffset = Math.max(550, Math.min(1150, 50.0 * Math.max(0, avgTemp - dewPoint)));
 
   return Math.round(Math.max(3100, Math.min(3800, 2650 + lclOffset)));
-}
-
-/**
- * Historical cloud classification mapping for the 10 NASA MODIS daily satellite images.
- */
-export const NASA_HISTORY_CLASSIFICATIONS: Record<string, CloudClassificationType> = {
-  '2026-09-07': 'cumulonimbus',       // 14% cloud cover: Giant convective frontal squall line & anvil
-  '2026-09-08': 'cumulus_congestus', // 4% cloud cover: Towering mountain orographic cauliflowers
-  '2026-09-11': 'altocumulus',        // 2% cloud cover: Clustered puffy altocumulus rolls over valleys
-  '2026-09-06': 'cirrus',             // 2% cloud cover: High northern anvil blowoff streaks
-  '2026-09-12': 'cumulus_humilis',    // 0.6% cloud cover: Classic fair-weather ☁️ cotton puffs
-  '2026-09-13': 'cumulus_humilis',    // 0.5% cloud cover: Scattered ☁️ puffs
-  '2026-09-14': 'cumulus_humilis',    // 0.3% cloud cover: Isolated fair-weather ☁️ puffs
-  '2026-09-15': 'clear_sky',          // 0.02% cloud cover: Pristine clear sky
-  '2026-09-10': 'clear_sky',          // 0.02% cloud cover: Dry sunny autumn thermal
-  '2026-09-09': 'clear_sky',          // 0.02% cloud cover: Desert high-pressure clear sky
-};
-
-/**
- * Dynamically identifies the cloud classification based on satellite date or synoptic observations.
- */
-export function identifyCloudClassification(
-  mode: WeatherMode,
-  historyDate: string,
-  weatherPayload?: SulaymaniyahWeatherPayload | null,
-  forecastHourOffset: number = 0
-): CloudClassification {
-  if (mode === 'history') {
-    const cloudType = NASA_HISTORY_CLASSIFICATIONS[historyDate] || 'cumulus_humilis';
-    return CLOUD_PROFILES[cloudType];
-  }
-
-  if (mode === 'forecast') {
-    if (weatherPayload?.hourly?.precipitations && weatherPayload.hourly.precipitations.length > 0) {
-      const hourIdx = Math.max(0, Math.min(72, weatherPayload.currentHourIndex + forecastHourOffset));
-      const maxPrecip = Math.max(...weatherPayload.hourly.precipitations.map(stPrecip => stPrecip[hourIdx] ?? 0));
-      const avgCloud = weatherPayload.hourly.cloudCovers.reduce((acc, stCloud) => acc + (stCloud[hourIdx] ?? 0), 0) / weatherPayload.hourly.cloudCovers.length;
-      const maxCode = Math.max(...weatherPayload.hourly.weatherCodes.map(stCode => stCode[hourIdx] ?? 0));
-
-      if (maxPrecip > 1.2 || maxCode >= 80) {
-        return CLOUD_PROFILES.cumulonimbus;
-      }
-      if (avgCloud > 50) {
-        return CLOUD_PROFILES.cumulus_congestus;
-      }
-      if (avgCloud > 18) {
-        return CLOUD_PROFILES.cumulus_humilis;
-      }
-      return CLOUD_PROFILES.clear_sky;
-    }
-
-    return CLOUD_PROFILES.cumulus_humilis;
-  }
-
-  // Live Mode: Analyze Open-Meteo telemetry
-  if (weatherPayload?.stations && weatherPayload.stations.length > 0) {
-    const stations = weatherPayload.stations;
-    const avgCloud = stations.reduce((acc, s) => acc + (s.cloudCover || 0), 0) / stations.length;
-    const maxPrecip = Math.max(...stations.map(s => s.precipitation || 0));
-    const maxCode = Math.max(...stations.map(s => s.weatherCode || 0));
-
-    if (maxPrecip > 1.0 || maxCode >= 80) {
-      return CLOUD_PROFILES.cumulonimbus;
-    }
-    if (avgCloud > 50) {
-      return CLOUD_PROFILES.cumulus_congestus;
-    }
-    if (avgCloud > 18) {
-      return CLOUD_PROFILES.cumulus_humilis;
-    }
-    return CLOUD_PROFILES.clear_sky;
-  }
-
-  // Default fallback: Classic fair-weather ☁️
-  return CLOUD_PROFILES.cumulus_humilis;
 }

@@ -19,7 +19,7 @@ import {
   Info,
   Clock
 } from 'lucide-react';
-import { NorthVietnamWeatherPayload } from '../services/weatherService';
+import { KurdistanWeatherPayload } from '../services/weatherService';
 import { Landmark } from '../types';
 import {
   KURDISTAN_LANDMARKS,
@@ -47,7 +47,7 @@ export type MetLayerType = 'composite' | 'radar' | 'clouds' | 'temperature' | 's
 interface SatelliteMetViewerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  weatherPayload: NorthVietnamWeatherPayload;
+  weatherPayload: KurdistanWeatherPayload;
   weatherTexture?: THREE.Texture | null;
   onFlyToLandmark?: (lm: Landmark) => void;
   activeSatelliteDate?: string;
@@ -148,7 +148,7 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
         setImageLoading(false);
         setImageLoadError(true);
       };
-      img.src = '/tiles/erbil_map_hd.jpg?v=erbil_map_hd';
+      img.src = 'tiles/erbil_map_hd.jpg?v=erbil_map_hd';
       return;
     }
 
@@ -492,7 +492,7 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
               <option value={yesterdayIso}>Pass: Yesterday ({yesterdayIso})</option>
               {LOCAL_NASA_HISTORY_DATES.map((d) => (
                 <option key={d} value={d}>
-                  Archive Pass: {d}{d === '2026-09-07' ? ' (Cloudy)' : ''}
+                  Archive Pass: {d}
                 </option>
               ))}
               <option value="hd_base">Kurdistan HD Orthomosaic Base</option>

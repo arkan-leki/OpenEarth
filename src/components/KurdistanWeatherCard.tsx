@@ -16,7 +16,7 @@ import { LiveWeatherStation } from '../types';
 import { KURDISTAN_LANDMARKS } from '../utils/realSulaymaniyahTerrain';
 import { SunPositionResult } from '../utils/sunPosition';
 
-interface NorthVietnamWeatherCardProps {
+interface KurdistanWeatherCardProps {
   station?: LiveWeatherStation;
   selectedLandmarkId: string;
   onSelectLandmarkId: (id: string) => void;
@@ -26,7 +26,7 @@ interface NorthVietnamWeatherCardProps {
   sunPosition?: SunPositionResult;
 }
 
-export const NorthVietnamWeatherCard: React.FC<NorthVietnamWeatherCardProps> = ({
+export const KurdistanWeatherCard: React.FC<KurdistanWeatherCardProps> = ({
   station,
   selectedLandmarkId,
   onSelectLandmarkId,
@@ -259,6 +259,4 @@ export const NorthVietnamWeatherCard: React.FC<NorthVietnamWeatherCardProps> = (
   );
 };
 
-export const KurdistanWeatherCard = NorthVietnamWeatherCard;
-export const NorthIraqWeatherCard = NorthVietnamWeatherCard;
 

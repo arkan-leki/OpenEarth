@@ -15,7 +15,7 @@ import {
   isBlankSatelliteImage
 } from './liveSatelliteService';
 import {
-  NorthVietnamWeatherPayload,
+  KurdistanWeatherPayload,
   KURDISTAN_STATIONS,
   WEATHER_SAMPLE_POINTS,
   fetchRealStationPrecipitationForDate
@@ -113,8 +113,8 @@ function loadReferenceGroundData(targetWidth = EXTRACT_RES, targetHeight = EXTRA
 
   refGroundPromise = (async () => {
     const [nasaPixels, hdPixels] = await Promise.all([
-      loadImagePixels('/tiles/nasa_history/2026-09-15.jpg?v=kurdistan_ref', targetWidth, targetHeight),
-      loadImagePixels('/tiles/erbil_map_ref.jpg?v=erbil_map_ref', targetWidth, targetHeight)
+      loadImagePixels('tiles/erbil_map_hd.jpg?v=erbil_map_hd', targetWidth, targetHeight),
+      loadImagePixels('tiles/erbil_map_ref.jpg?v=erbil_map_ref', targetWidth, targetHeight)
     ]);
 
     const primary = nasaPixels || hdPixels;
@@ -194,7 +194,7 @@ export function subscribeToSatelliteCloudUpdates(listener: CloudUpdateListener):
  */
 export function extractCloudsFromSatelliteImage(
   sourceImage: HTMLImageElement | HTMLCanvasElement,
-  weatherPayload?: NorthVietnamWeatherPayload | null,
+  weatherPayload?: KurdistanWeatherPayload | null,
   radarCanvas?: HTMLCanvasElement | null,
   targetWidth = EXTRACT_RES,
   targetHeight = EXTRACT_RES,
@@ -279,7 +279,7 @@ export function extractCloudsFromSatelliteImage(
   const stations = weatherPayload?.stations || [];
   const avgTemp = stations[0]?.temperature ?? 24;
   const maxStationPrecip = stations.length > 0 ? Math.max(...stations.map((s) => s.precipitation ?? 0)) : 0;
-  const avgHumidity = stations.length > 0 ? stations.reduce((acc, s) => acc + (s.humidity ?? 45), 0) / stations.length : 45;
+  const avgHumidity = stations.length > 0 ? stations.reduce((acc, s) => acc + (s.relativeHumidity ?? 45), 0) / stations.length : 45;
   const maxWindSpeed = stations.length > 0 ? Math.max(...stations.map((s) => s.windSpeed ?? 10)) : 12;
 
   // ---------------------------------------------------------------------------
@@ -872,7 +872,7 @@ function fbmLiveCloud2D(u: number, v: number): number {
  * and live RainViewer Doppler radar echoes — completely distinct from NASA Today & Yesterday.
  */
 export function buildCombinedLiveWeatherAndCloudTexture(
-  weatherPayload: NorthVietnamWeatherPayload,
+  weatherPayload: KurdistanWeatherPayload,
   liveIrCanvas?: HTMLCanvasElement | null,
   liveRadarCanvas?: HTMLCanvasElement | null,
   size = 1024
@@ -973,7 +973,7 @@ export function buildCombinedLiveWeatherAndCloudTexture(
           const liveC = (weatherPayload.hourly.cloudCovers[sIdx]?.[hourIdx] ?? st.cloudCover) / 100.0;
           const sPrecip = weatherPayload.hourly.precipitations[sIdx]?.[hourIdx] ?? st.precipitation;
           const sTemp = weatherPayload.hourly.temperatures[sIdx]?.[hourIdx] ?? st.temperature;
-          const sHum = weatherPayload.hourly.humidities?.[sIdx]?.[hourIdx] ?? st.humidity ?? 35;
+          const sHum = st.relativeHumidity ?? 35;
           const sWind = weatherPayload.hourly.windSpeeds?.[sIdx]?.[hourIdx] ?? st.windSpeed ?? 10;
 
           weightedCloud += liveC * weight;
@@ -1099,7 +1099,7 @@ function phenomenaDataOrEmpty(arr: Uint8Array): Uint8Array {
 export async function loadLiveSatelliteCloudPass(
   date = getTodayDateIso(0),
   sensor = 'VIIRS_SNPP_CorrectedReflectance_TrueColor',
-  weatherPayload?: NorthVietnamWeatherPayload | null
+  weatherPayload?: KurdistanWeatherPayload | null
 ): Promise<SatelliteCloudAnalysis | null> {
   const cacheKey = `${sensor}_${date}_1024_v7_all_clouds`;
   if (cloudAnalysisCache.has(cacheKey)) {
@@ -1128,12 +1128,6 @@ export async function loadLiveSatelliteCloudPass(
     // Fetch real measured Open-Meteo precipitation for the actual satellite pass date
     const dateStationPrecip = await fetchRealStationPrecipitationForDate(satResult.actualDate);
 
-    let preMaskImg: HTMLImageElement | null = null;
-    const matchHistory = satResult.src.match(/\/tiles\/nasa_history\/(\d{4}-\d{2}-\d{2})\.jpg/);
-    if (matchHistory) {
-      preMaskImg = await loadOptionalImage(`/tiles/nasa_history/${matchHistory[1]}_clouds.png`);
-    }
-
     const result = extractCloudsFromSatelliteImage(
       satImg,
       weatherPayload,
@@ -1141,7 +1135,7 @@ export async function loadLiveSatelliteCloudPass(
       EXTRACT_RES,
       EXTRACT_RES,
       refGround,
-      preMaskImg,
+      null,
       null,
       dateStationPrecip
     );

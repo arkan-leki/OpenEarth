@@ -40,10 +40,6 @@ export const KURDISTAN_STATIONS: StationLocation[] = [
   { id: 'darbandikhan', name: 'Lake Darbandikhan (دەربەندیخان)', lat: 35.1120, lon: 45.7050, nominalElevation: 485, colIndex: 2, rowIndex: 3 }
 ];
 
-// Backward compatibility aliases
-export const NORTH_IRAQ_STATIONS = KURDISTAN_STATIONS;
-export const SULAYMANIYAH_STATIONS = KURDISTAN_STATIONS;
-export const NORTH_VIETNAM_STATIONS = KURDISTAN_STATIONS;
 
 /**
  * Real weather SAMPLING points across the entire map.
@@ -130,10 +126,6 @@ export interface KurdistanWeatherPayload {
   lastUpdated: string;
 }
 
-// Backward compatibility aliases
-export type NorthVietnamWeatherPayload = KurdistanWeatherPayload;
-export type SulaymaniyahWeatherPayload = KurdistanWeatherPayload;
-export type NorthIraqWeatherPayload = KurdistanWeatherPayload;
 
 const getFallbackTodayDate = () => new Date().toISOString().slice(0, 10);
 const getFallbackDateFormatted = () =>
@@ -466,10 +458,6 @@ export async function fetchLiveKurdistanWeather(): Promise<KurdistanWeatherPaylo
   };
 }
 
-// Backward compatibility aliases
-export const fetchLiveNorthVietnamWeather = fetchLiveKurdistanWeather;
-export const fetchLiveSulaymaniyahWeather = fetchLiveKurdistanWeather;
-export const fetchLiveNorthIraqWeather = fetchLiveKurdistanWeather;
 
 const datePrecipCache = new Map<string, number[]>();
 

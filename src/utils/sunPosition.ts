@@ -10,7 +10,6 @@ export const KURDISTAN_LATITUDE = 36.1911;
 export const KURDISTAN_LONGITUDE = 44.0092;
 export const KURDISTAN_UTC_OFFSET_HOURS = 3;
 
-// Backward compatibility aliases
 export const HANOI_LATITUDE = KURDISTAN_LATITUDE;
 export const HANOI_LONGITUDE = KURDISTAN_LONGITUDE;
 export const HANOI_UTC_OFFSET_HOURS = KURDISTAN_UTC_OFFSET_HOURS;
@@ -39,7 +38,6 @@ export interface SunPositionResult {
   fogColor: string;
   cloudSunScatter: number;
   kurdistanTimeString: string;
-  hanoiTimeString: string; // Backward compatibility
   solarNoonString: string;
   sunriseString: string;
   sunsetString: string;
@@ -54,8 +52,6 @@ export function getNowInKurdistan(): Date {
   return new Date(utcMs + KURDISTAN_UTC_OFFSET_HOURS * 3600000);
 }
 
-// Backward compatibility alias
-export const getNowInHanoi = getNowInKurdistan;
 
 /**
  * Create a Date object for a specific hour/minute in Kurdistan today
@@ -66,8 +62,6 @@ export function createKurdistanDate(hours: number, minutes = 0, seconds = 0): Da
   return kurdNow;
 }
 
-// Backward compatibility alias
-export const createHanoiDate = createKurdistanDate;
 
 /**
  * High-precision NOAA Solar Position Algorithm calibrated for Kurdistan & Zagros Mountains
@@ -355,15 +349,12 @@ export function getKurdistanSunPosition(date: Date): SunPositionResult {
     fogColor,
     cloudSunScatter,
     kurdistanTimeString,
-    hanoiTimeString: kurdistanTimeString,
     solarNoonString: coords.solarNoonString,
     sunriseString: coords.sunriseString,
     sunsetString: coords.sunsetString
   };
 }
 
-// Backward compatibility alias
-export const getHanoiSunPosition = getKurdistanSunPosition;
 
 /**
  * Returns fixed high-noon daytime sun position (12:00 PM in Kurdistan)

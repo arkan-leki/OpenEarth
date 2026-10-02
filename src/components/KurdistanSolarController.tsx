@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Sun, Moon, Sunrise, Sunset, Clock, Sparkles, ChevronDown, ChevronUp, Compass, Flame } from 'lucide-react';
 import { SunPositionResult } from '../utils/sunPosition';
 
-interface HanoiSolarControllerProps {
+interface KurdistanSolarControllerProps {
   sunPosition: SunPositionResult;
   isLiveTime: boolean;
   simulatedMinutes: number; // 0 to 1439
@@ -12,7 +12,7 @@ interface HanoiSolarControllerProps {
   onToggleDaytimeMode?: (daytime: boolean) => void;
 }
 
-export const HanoiSolarController: React.FC<HanoiSolarControllerProps> = ({
+export const KurdistanSolarController: React.FC<KurdistanSolarControllerProps> = ({
   sunPosition,
   isLiveTime,
   simulatedMinutes,
@@ -104,7 +104,7 @@ export const HanoiSolarController: React.FC<HanoiSolarControllerProps> = ({
         <div className="flex flex-col text-left">
           <div className="flex items-center gap-1.5">
             <span className="text-[11px] font-mono font-semibold text-slate-100">
-              {isDaytimeMode ? '12:00:00 AST' : (sunPosition.kurdistanTimeString || sunPosition.hanoiTimeString)}
+              {isDaytimeMode ? '12:00:00 AST' : (sunPosition.kurdistanTimeString)}
             </span>
             {isDaytimeMode ? (
               <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[9px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
@@ -201,7 +201,7 @@ export const HanoiSolarController: React.FC<HanoiSolarControllerProps> = ({
             <div className="flex items-center justify-between text-[11px] font-mono">
               <span className="text-slate-400">Local Time of Day:</span>
               <span className="text-cyan-300 font-bold bg-cyan-950/60 px-2 py-0.5 rounded border border-cyan-800/60">
-                {isDaytimeMode ? '12:00 (Noon Override)' : isLiveTime ? (sunPosition.kurdistanTimeString || sunPosition.hanoiTimeString) : `${formatMins(simulatedMinutes)} AST`}
+                {isDaytimeMode ? '12:00 (Noon Override)' : isLiveTime ? (sunPosition.kurdistanTimeString) : `${formatMins(simulatedMinutes)} AST`}
               </span>
             </div>
 
@@ -316,5 +316,4 @@ export const HanoiSolarController: React.FC<HanoiSolarControllerProps> = ({
   );
 };
 
-export const KurdistanSolarController = HanoiSolarController;
 

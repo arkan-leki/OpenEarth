@@ -53,14 +53,14 @@ export const NASA_SATELLITE_LAYERS: SatelliteLayerMeta[] = [
 ];
 
 /**
- * Gets today's ISO date string (YYYY-MM-DD) in UTC or Hanoi ICT
+ * Gets today's ISO date string (YYYY-MM-DD) in Baghdad AST (UTC+3)
  */
 export function getTodayDateIso(daysOffset = 0): string {
+  // Baghdad (AST, UTC+3) local calendar date. This is a Kurdistan weather tool, so
+  // "today" must follow the region's clock — not UTC, which flips the date 3h early.
   const d = new Date();
-  if (daysOffset !== 0) {
-    d.setDate(d.getDate() + daysOffset);
-  }
-  return d.toISOString().slice(0, 10);
+  d.setDate(d.getDate() + daysOffset);
+  return d.toLocaleDateString('en-CA', { timeZone: 'Asia/Baghdad' });
 }
 
 /**
@@ -87,18 +87,11 @@ export function getGibsCompatibleDate(dateIso: string): string {
   return dateIso;
 }
 
-export const LOCAL_NASA_HISTORY_DATES: string[] = [
-  '2026-09-15',
-  '2026-09-14',
-  '2026-09-13',
-  '2026-09-12',
-  '2026-09-11',
-  '2026-09-10',
-  '2026-09-09',
-  '2026-09-08',
-  '2026-09-07',
-  '2026-09-06'
-];
+/** Most recent real archive dates (today−1 … today−10) for the pass picker. */
+export const LOCAL_NASA_HISTORY_DATES: string[] = Array.from(
+  { length: 10 },
+  (_, i) => getTodayDateIso(-(i + 1))
+);
 
 /**
  * Constructs the NASA GIBS WMS URL for Northern Iraq & Kurdistan bounds
@@ -211,21 +204,6 @@ export async function loadRobustSatelliteImage(
 
   const candidateUrls: Array<{ url: string; date: string; isPending: boolean; note: string }> = [];
 
-  // Check if date is one of the pre-cached local Northern Iraq archive passes (2026-09-06..2026-09-15)
-  const localArchiveDates = new Set([
-    '2026-09-15', '2026-09-14', '2026-09-13', '2026-09-12', '2026-09-11',
-    '2026-09-10', '2026-09-09', '2026-09-08', '2026-09-07', '2026-09-06'
-  ]);
-
-  if (localArchiveDates.has(date)) {
-    candidateUrls.push({
-      url: `/tiles/nasa_history/${date}.jpg`,
-      date: date,
-      isPending: false,
-      note: `NASA MODIS Confirmed Orbital Pass (${date})`
-    });
-  }
-
   // Helper to load and verify a single image URL
   const tryLoadValidImage = async (url: string): Promise<HTMLImageElement | null> => {
     try {
@@ -276,19 +254,14 @@ export async function loadRobustSatelliteImage(
         note: `NASA MODIS Aqua Orbital Pass (Yesterday • ${effectiveYesterdayDate})`
       },
       {
-        url: '/tiles/nasa_history/2026-09-08.jpg',
-        date: effectiveYesterdayDate,
+        url: getNasaGibsWmsUrl('MODIS_Terra_CorrectedReflectance_TrueColor', twoDaysAgoIso, 1280, 1024),
+        date: twoDaysAgoIso,
         isPending: false,
-        note: `NASA MODIS Confirmed Orbital Pass (Yesterday • ${effectiveYesterdayDate})`
+        note: `NASA MODIS Terra Orbital Pass (${twoDaysAgoIso})`
       }
     );
   } else if (date !== todayIso) {
-    // Custom historical date selected by user: query all 4 NASA sensors for that exact date first!
-    const historyFallbackIdx =
-      Math.abs(date.split('').reduce((acc, ch) => acc * 31 + ch.charCodeAt(0), 7)) %
-      LOCAL_NASA_HISTORY_DATES.length;
-    const matchedHistoryDate = LOCAL_NASA_HISTORY_DATES[historyFallbackIdx];
-
+    // Custom historical date selected by user: query all 4 NASA sensors for that exact date.
     candidateUrls.push(
       {
         url: getNasaGibsWmsUrl(sensor, date, 1280, 1024),
@@ -319,12 +292,6 @@ export async function loadRobustSatelliteImage(
         date: date,
         isPending: false,
         note: `NASA VIIRS NOAA-20 Orbital Pass (${date})`
-      },
-      {
-        url: `/tiles/nasa_history/${matchedHistoryDate}.jpg`,
-        date: date,
-        isPending: false,
-        note: `NASA MODIS Archive Orbital Pass (${date})`
       }
     );
   } else {
@@ -372,16 +339,16 @@ export async function loadRobustSatelliteImage(
         note: `NASA VIIRS NOAA-20 Latest Clean Pass (${yesterdayIso})`
       },
       {
-        url: '/tiles/nasa_history/2026-09-07.jpg',
-        date: date,
+        url: getNasaGibsWmsUrl('MODIS_Aqua_CorrectedReflectance_TrueColor', twoDaysAgoIso, 1280, 1024),
+        date: twoDaysAgoIso,
         isPending: false,
-        note: 'NASA MODIS Confirmed Orbital Pass (Kurdistan)'
+        note: `NASA MODIS Aqua Orbital Pass (${twoDaysAgoIso})`
       }
     );
   }
 
   candidateUrls.push({
-    url: '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
+    url: 'tiles/erbil_map_hd.jpg?v=erbil_map_hd',
     date: 'Reference Pass',
     isPending: false,
     note: 'High-Definition Calibrated Northern Iraq Satellite Orthomosaic'
@@ -403,7 +370,7 @@ export async function loadRobustSatelliteImage(
   // Guaranteed fallback
   const fallback = new Image();
   fallback.crossOrigin = 'anonymous';
-  fallback.src = '/tiles/erbil_map_hd.jpg?v=erbil_map_hd';
+  fallback.src = 'tiles/erbil_map_hd.jpg?v=erbil_map_hd';
   await new Promise((resolve) => {
     fallback.onload = resolve;
     fallback.onerror = resolve;
@@ -411,7 +378,7 @@ export async function loadRobustSatelliteImage(
 
   return {
     image: fallback,
-    src: '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
+    src: 'tiles/erbil_map_hd.jpg?v=erbil_map_hd',
     isTodayPending: false,
     actualDate: 'Reference Orthomosaic',
     statusNote: 'Calibrated High-Definition Northern Iraq Satellite Orthomosaic'
@@ -643,7 +610,7 @@ export async function createRainViewerRadarCanvas(
         i.crossOrigin = 'anonymous';
         i.onload = () => resolve(i);
         i.onerror = () => reject(new Error('Base load failed'));
-        i.src = '/tiles/erbil_map_hd.jpg?v=erbil_map_hd';
+        i.src = 'tiles/erbil_map_hd.jpg?v=erbil_map_hd';
       });
       ctx.drawImage(baseImg, 0, 0, canvas.width, canvas.height);
     } catch {

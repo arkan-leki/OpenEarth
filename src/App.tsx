@@ -2,16 +2,16 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import * as THREE from 'three';
 import { ZoomEarthTopBar } from './components/ZoomEarthTopBar';
 import { ZoomEarthFloatingControls } from './components/ZoomEarthFloatingControls';
-import { NorthVietnamWeatherCard } from './components/NorthVietnamWeatherCard';
+import { KurdistanWeatherCard } from './components/KurdistanWeatherCard';
 import { WeatherSimulationView } from './components/WeatherSimulationView';
 import { loadSatelliteTilesForChunks } from './services/chunkSatelliteService';
 import { SatelliteMetViewerModal } from './components/SatelliteMetViewerModal';
-import { HanoiSolarController } from './components/HanoiSolarController';
+import { KurdistanSolarController } from './components/KurdistanSolarController';
 import { Ground360ControlBar } from './components/Ground360ControlBar';
 import {
-  getNowInHanoi,
-  createHanoiDate,
-  getHanoiSunPosition,
+  getNowInKurdistan,
+  createKurdistanDate,
+  getKurdistanSunPosition,
   SunPositionResult
 } from './utils/sunPosition';
 import {
@@ -19,9 +19,9 @@ import {
   createWeatherDataTexture
 } from './utils/weatherDataPipeline';
 import {
-  fetchLiveNorthVietnamWeather,
+  fetchLiveKurdistanWeather,
   FALLBACK_WEATHER_DATA,
-  NorthVietnamWeatherPayload
+  KurdistanWeatherPayload
 } from './services/weatherService';
 import {
   KURDISTAN_LANDMARKS,
@@ -59,7 +59,7 @@ const DEFAULT_SHADER_PARAMS: ShaderParameters = {
 };
 
 export default function App() {
-  const [weatherPayload, setWeatherPayload] = useState<NorthVietnamWeatherPayload>(FALLBACK_WEATHER_DATA);
+  const [weatherPayload, setWeatherPayload] = useState<KurdistanWeatherPayload>(FALLBACK_WEATHER_DATA);
   const [, setIsWeatherLoading] = useState<boolean>(false);
 
   // Selected landmark in Kurdistan (default: Erbil Citadel)
@@ -193,17 +193,17 @@ export default function App() {
   // Default isDaytimeMode to true so the 3D Rayleigh sky is vibrant blue and terrain/clouds are brightly lit
   const [isDaytimeMode, setIsDaytimeMode] = useState<boolean>(true);
   const [isLiveTime, setIsLiveTime] = useState<boolean>(true);
-  const [hanoiClock, setHanoiClock] = useState<Date>(() => getNowInHanoi());
+  const [kurdistanClock, setKurdistanClock] = useState<Date>(() => getNowInKurdistan());
   const [simulatedMinutes, setSimulatedMinutes] = useState<number>(() => {
-    const d = getNowInHanoi();
+    const d = getNowInKurdistan();
     return d.getHours() * 60 + d.getMinutes();
   });
 
-  // Real-time clock tick (updates every second when locked to live Hanoi time)
+  // Real-time clock tick (updates every second when locked to live Kurdistan time)
   useEffect(() => {
     if (!isLiveTime || isDaytimeMode) return;
     const interval = setInterval(() => {
-      setHanoiClock(getNowInHanoi());
+      setKurdistanClock(getNowInKurdistan());
     }, 1000);
     return () => clearInterval(interval);
   }, [isLiveTime, isDaytimeMode]);
@@ -211,18 +211,18 @@ export default function App() {
   // Active date used for astronomical solar coordinates calculation
   const activeSolarDate = useMemo(() => {
     if (isDaytimeMode) {
-      // Optimal high noon in Hanoi (12:00 PM ICT) for direct, crystal-clear daylight visibility
-      return createHanoiDate(12, 0, 0);
+      // Optimal high noon in Kurdistan (12:00 PM AST) for direct, crystal-clear daylight visibility
+      return createKurdistanDate(12, 0, 0);
     }
     if (isLiveTime) {
-      return hanoiClock;
+      return kurdistanClock;
     }
-    return createHanoiDate(Math.floor(simulatedMinutes / 60), simulatedMinutes % 60);
-  }, [isDaytimeMode, isLiveTime, hanoiClock, simulatedMinutes]);
+    return createKurdistanDate(Math.floor(simulatedMinutes / 60), simulatedMinutes % 60);
+  }, [isDaytimeMode, isLiveTime, kurdistanClock, simulatedMinutes]);
 
   // Dynamic astronomical sun position result (elevation, azimuth, light intensity, colors, shadow vectors)
   const sunPosition = useMemo<SunPositionResult>(() => {
-    return getHanoiSunPosition(activeSolarDate);
+    return getKurdistanSunPosition(activeSolarDate);
   }, [activeSolarDate]);
 
   // Display toggles
@@ -253,14 +253,14 @@ export default function App() {
     seq: number;
   } | null>(null);
 
-  // Fetch real-time North Vietnam meteorological telemetry from Open-Meteo
+  // Fetch real-time Kurdistan meteorological telemetry from Open-Meteo
   const loadLiveWeather = useCallback(async () => {
     setIsWeatherLoading(true);
     try {
-      const data = await fetchLiveNorthVietnamWeather();
+      const data = await fetchLiveKurdistanWeather();
       setWeatherPayload(data);
     } catch (err) {
-      console.warn('Using fallback North Vietnam meteorological observations:', err);
+      console.warn('Using fallback Kurdistan meteorological observations:', err);
     } finally {
       setIsWeatherLoading(false);
     }
@@ -272,7 +272,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loadLiveWeather]);
 
-  // Spatial chunks covering 240km x 160km North Vietnam topography
+  // Spatial chunks covering 240km x 160km Kurdistan topography
   const [chunks, setChunks] = useState<GridChunkData[]>(() =>
     generateInitialChunkGrid(FALLBACK_WEATHER_DATA, 0)
   );
@@ -287,7 +287,7 @@ export default function App() {
     return active;
   }, [chunks]);
 
-  // Real multi-channel live weather texture across North Vietnam (Station-interpolated baseline)
+  // Real multi-channel live weather texture across Kurdistan (Station-interpolated baseline)
   const weatherTexture = useMemo(() => {
     const { texture } = createWeatherDataTexture(1024, weatherPayload);
     return texture;
@@ -577,9 +577,9 @@ export default function App() {
         />
       )}
 
-      {/* 3. Floating Hanoi Dynamic Sun Position, Shadow & Time Controller */}
+      {/* 3. Floating Kurdistan Dynamic Sun Position, Shadow & Time Controller */}
       {!hideAll && (
-        <HanoiSolarController
+        <KurdistanSolarController
           sunPosition={sunPosition}
           isLiveTime={isLiveTime}
           simulatedMinutes={simulatedMinutes}
@@ -615,7 +615,7 @@ export default function App() {
 
       {/* 5. Live Weather & Landmark Telemetry Card (Bottom Left, Minimizeable) */}
       {!hideAll && (
-        <NorthVietnamWeatherCard
+        <KurdistanWeatherCard
           station={currentStation}
           selectedLandmarkId={selectedLandmarkId}
           onSelectLandmarkId={handleSelectLandmarkById}

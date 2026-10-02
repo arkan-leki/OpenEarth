@@ -15,7 +15,7 @@ const cache = new Map<string, THREE.Texture>();
 const pending = new Map<string, Promise<THREE.Texture | null>>();
 
 export function chunkTilePath(chunkId: string): string {
-  return `/tiles/erbil_chunk_${chunkId}.jpg`;
+  return `tiles/erbil_chunk_${chunkId}.jpg`;
 }
 
 export function loadChunkTile(chunkId: string): Promise<THREE.Texture | null> {

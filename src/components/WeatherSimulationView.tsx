@@ -477,6 +477,7 @@ export interface WeatherSimulationViewProps {
   nasaCloudTexture?: THREE.Texture | null;
   phenomenaTexture?: THREE.Texture | null;
   groundTexture?: THREE.Texture | null;
+  chunkSatelliteTextures?: Map<string, THREE.Texture> | null;
   sunPosition?: SunPositionResult;
   onSelectLandmark: (lm: Landmark) => void;
   targetCameraPose: { pos: [number, number, number]; target: [number, number, number] } | null;

@@ -85,9 +85,6 @@ export const KURDISTAN_SECTOR_NAMES: Record<string, string> = {
   D4: 'Persian Gulf & Kuwait'
 };
 
-// Backward compatibility aliases
-export const NORTH_IRAQ_SECTOR_NAMES = KURDISTAN_SECTOR_NAMES;
-export const NORTH_VIETNAM_SECTOR_NAMES = KURDISTAN_SECTOR_NAMES;
 
 export function generateInitialChunkGrid(
   weatherPayload?: KurdistanWeatherPayload | null,
@@ -213,7 +210,7 @@ export function generateInitialChunkGrid(
 }
 
 /**
- * Creates and fills a THREE.DataTexture with real North Vietnam multi-channel weather data:
+ * Creates and fills a THREE.DataTexture with real Kurdistan multi-channel weather data:
  * R: Cloud Density (0..255)
  * G: Rain Intensity (0..255)
  * B: Temperature (0..255)

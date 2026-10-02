@@ -95,8 +95,6 @@ export interface LiveWeatherStation {
   dateFormatted?: string;
 }
 
-export type WeatherMode = 'live' | 'forecast' | 'history' | 'storm_simulation';
-
 export interface NasaHistoryDay {
   date: string;
   label: string;

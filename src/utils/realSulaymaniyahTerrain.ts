@@ -80,7 +80,6 @@ export function isInsideMapCircle(worldX: number, worldZ: number, marginMeters =
 export const HALF_DOMAIN_WIDTH = DOMAIN_WIDTH_METERS / 2;   // 800000 m
 export const HALF_DOMAIN_HEIGHT = DOMAIN_HEIGHT_METERS / 2; // 800000 m
 
-// Backward compatibility aliases
 export const DOMAIN_SIZE_METERS = DOMAIN_WIDTH_METERS;
 export const HALF_DOMAIN = HALF_DOMAIN_WIDTH;
 
@@ -108,7 +107,7 @@ export function loadRealDemData(): Promise<Int16Array | null> {
   if (cachedDemData) return Promise.resolve(cachedDemData);
   if (demLoadPromise) return demLoadPromise;
 
-  demLoadPromise = fetch('/data/erbil_map_dem.bin')
+  demLoadPromise = fetch('data/erbil_map_dem.bin')
     .then((res) => {
       if (!res.ok) throw new Error('Failed to load regional DEM binary');
       return res.arrayBuffer();
@@ -254,9 +253,6 @@ export function getRealKurdistanElevation(worldX: number, worldZ: number): numbe
   return getAnalyticalKurdistanElevation(worldX, worldZ);
 }
 
-// Backward compatibility aliases
-export const getRealSulaymaniyahElevation = getRealKurdistanElevation;
-export const getRealNorthVietnamElevation = getRealKurdistanElevation;
 
 export function sampleRealElevationAtLonLat(lon: number, lat: number): number {
   const [wx, wz] = geoToWorld(lon, lat);
@@ -273,7 +269,7 @@ export function getKurdistanSatelliteTexture(type: 'nasa' | 'hd' = 'hd'): THREE.
   if (type === 'hd') {
     if (!hdTexture) {
       hdTexture = loader.load(
-        '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
+        'tiles/erbil_map_hd.jpg?v=erbil_map_hd',
         (tex) => {
           tex.colorSpace = THREE.SRGBColorSpace;
           tex.needsUpdate = true;
@@ -295,14 +291,14 @@ export function getKurdistanSatelliteTexture(type: 'nasa' | 'hd' = 'hd'): THREE.
 
   if (!nasaTexture) {
     nasaTexture = loader.load(
-      '/tiles/erbil_map_hd.jpg?v=erbil_map_hd',
+      'tiles/erbil_map_hd.jpg?v=erbil_map_hd',
       (tex) => {
         tex.colorSpace = THREE.SRGBColorSpace;
         tex.needsUpdate = true;
       },
       undefined,
       () => {
-        nasaTexture = loader.load('/tiles/erbil_map_hd.jpg?v=erbil_map_hd');
+        nasaTexture = loader.load('tiles/erbil_map_hd.jpg?v=erbil_map_hd');
       }
     );
     nasaTexture.colorSpace = THREE.SRGBColorSpace;
@@ -315,9 +311,7 @@ export function getKurdistanSatelliteTexture(type: 'nasa' | 'hd' = 'hd'): THREE.
   return nasaTexture;
 }
 
-// Backward compatibility aliases
 export const getSulaymaniyahSatelliteTexture = getKurdistanSatelliteTexture;
-export const getNorthVietnamSatelliteTexture = getKurdistanSatelliteTexture;
 
 /**
  * Builds real chunk geometry using the DEM heightmap and UV offsets for a sub-chunk.
@@ -530,7 +524,3 @@ export function getGround360CameraPose(
   };
 }
 
-// Backward compatibility aliases
-export const SULAYMANIYAH_LANDMARKS = KURDISTAN_LANDMARKS;
-export const NORTH_VIETNAM_LANDMARKS = KURDISTAN_LANDMARKS;
-export const NORTH_IRAQ_LANDMARKS = KURDISTAN_LANDMARKS;

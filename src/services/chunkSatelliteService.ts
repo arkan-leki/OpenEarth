@@ -15,6 +15,8 @@
  */
 
 import * as THREE from 'three';
+import { isBlankSatelliteImage } from './liveSatelliteService';
+import { MIN_LON, MAX_LON, MIN_LAT, MAX_LAT } from '../utils/realSulaymaniyahTerrain';
 
 export interface ChunkBounds {
   minLon: number;
@@ -64,6 +66,48 @@ const inFlight = new Map<string, Promise<THREE.Texture | null>>();
 export function clearSatelliteTextureCache(): void {
   for (const tex of textureCache.values()) tex.dispose();
   textureCache.clear();
+}
+
+/** Whole-domain bounds used only for cheap "is this date published yet" probes. */
+const DOMAIN_BOUNDS: ChunkBounds = {
+  minLon: MIN_LON,
+  maxLon: MAX_LON,
+  minLat: MIN_LAT,
+  maxLat: MAX_LAT
+};
+
+function shiftDateIso(dateIso: string, days: number): string {
+  const [y, m, d] = dateIso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + days));
+  return dt.toISOString().slice(0, 10);
+}
+
+async function probeGibsDate(layer: string, dateIso: string): Promise<boolean> {
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const i = new Image();
+      i.crossOrigin = 'anonymous';
+      i.onload = () => resolve(i);
+      i.onerror = () => reject(new Error('no pass'));
+      i.src = gibsWmsUrl(layer, DOMAIN_BOUNDS, 96, 96, dateIso);
+    });
+    return !isBlankSatelliteImage(img);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * NASA polar passes for "today" are usually not published yet. Resolve the latest
+ * date that actually has imagery (walking back a few days if needed) so the whole
+ * map is built from ONE real, coherent pass instead of blank chunks.
+ */
+async function resolveAvailableDate(dateIso: string, layer: string, maxDaysBack = 3): Promise<string> {
+  for (let back = 0; back <= maxDaysBack; back++) {
+    const candidate = shiftDateIso(dateIso, -back);
+    if (await probeGibsDate(layer, candidate)) return candidate;
+  }
+  return dateIso;
 }
 
 function loadOne(
@@ -131,14 +175,17 @@ export async function loadSatelliteTilesForChunks(
   const out = new Map<string, THREE.Texture>();
   let loaded = 0;
 
+  // Resolve once so every chunk uses the same real pass (today → yesterday → …).
+  const effectiveDate = await resolveAvailableDate(dateIso, layer);
+
   // Bounded concurrency: 16 parallel GIBS requests would be rude and slow.
   const queue = [...requests];
   const runners = new Array(Math.min(6, queue.length)).fill(null).map(async () => {
     while (queue.length) {
       const req = queue.shift();
       if (!req) return;
-      const key = `${dateIso}|${layer}|${req.id}`;
-      const tex = await loadOne(key, layer, req.bounds, tilePixelsFor(req.widthKm), dateIso);
+      const key = `${effectiveDate}|${layer}|${req.id}`;
+      const tex = await loadOne(key, layer, req.bounds, tilePixelsFor(req.widthKm), effectiveDate);
       if (tex) out.set(req.id, tex);
       loaded++;
       onProgress?.(loaded, requests.length);
