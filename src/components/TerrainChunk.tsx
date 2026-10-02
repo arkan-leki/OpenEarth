@@ -371,7 +371,7 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         // to read as distance/horizon. One smoothstep + one mix, no extra texture reads,
         // so it costs almost nothing and keeps GPU budget for the fine central mesh.
         float rimDistKm = length(vWorldPos.xz) * 0.001;
-        float rimFog = smoothstep(550.0, 780.0, rimDistKm);
+        float rimFog = smoothstep(680.0, 800.0, rimDistKm);
         vec3 rimFogColor = vec3(0.34, 0.60, 0.92);
         diffuseColor.rgb = mix(diffuseColor.rgb, rimFogColor, rimFog);`
       );

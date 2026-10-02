@@ -232,7 +232,7 @@ export const CloudShader = {
       // Circular fade-out so the cloud field ends at the same radius as the terrain
       // rim fog (≈550–780 km). Per-axis fade left clouds hanging in the square corners.
       float distFromCenter = length(p.xz) / (uDomainSizeXZ.x * 0.5);
-      float boxFalloff = 1.0 - smoothstep(0.68, 0.97, distFromCenter);
+      float boxFalloff = 1.0 - smoothstep(0.85, 0.98, distFromCenter);
       if (boxFalloff <= 0.001) return 0.0;
 
       vec4 weather = sampleWeatherSmooth(p.xz);
