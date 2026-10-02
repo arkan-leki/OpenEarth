@@ -87,6 +87,7 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     uCloudShadowDepth: { value: THREE.Texture | null };
     uTransitionProgress: { value: number };
     uSunDir: { value: THREE.Vector3 };
+    uSunElevation: { value: number };
     uTerrainExaggeration: { value: number };
     uCloudBaseY: { value: number };
     uCloudTopY: { value: number };
@@ -101,6 +102,7 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     uCloudShadowDepth: { value: cloudShadowDepthTexture },
     uTransitionProgress: { value: 1.0 },
     uSunDir: { value: new THREE.Vector3(0.55, 0.78, 0.28).normalize() },
+    uSunElevation: { value: 52.0 },
     uTerrainExaggeration: { value: terrainExaggeration },
     uCloudBaseY: { value: cloudBaseY },
     uCloudTopY: { value: cloudTopY },
@@ -182,6 +184,7 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
     shaderUniformsRef.current.uGlobeRefXZ.value.set(globeRefXZ[0], globeRefXZ[1]);
     if (sunPosition) {
       shaderUniformsRef.current.uSunDir.value.copy(sunPosition.sunDirection);
+      shaderUniformsRef.current.uSunElevation.value = sunPosition.elevationDeg;
     }
   });
 
@@ -196,6 +199,7 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
       shader.uniforms.uCloudShadowDepth = shaderUniformsRef.current.uCloudShadowDepth;
       shader.uniforms.uTransitionProgress = shaderUniformsRef.current.uTransitionProgress;
       shader.uniforms.uSunDir = shaderUniformsRef.current.uSunDir;
+      shader.uniforms.uSunElevation = shaderUniformsRef.current.uSunElevation;
       shader.uniforms.uTerrainExaggeration = shaderUniformsRef.current.uTerrainExaggeration;
       shader.uniforms.uCloudBaseY = shaderUniformsRef.current.uCloudBaseY;
       shader.uniforms.uCloudTopY = shaderUniformsRef.current.uCloudTopY;
@@ -242,6 +246,7 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         uniform sampler2D uCloudShadowDepth;
         uniform float uTransitionProgress;
         uniform vec3 uSunDir;
+        uniform float uSunElevation;
         uniform float uTerrainExaggeration;
         uniform float uCloudBaseY;
         uniform float uCloudTopY;
@@ -372,8 +377,13 @@ export const TerrainChunk: React.FC<TerrainChunkProps> = ({
         // so it costs almost nothing and keeps GPU budget for the fine central mesh.
         float rimDistKm = length(vWorldPos.xz) * 0.001;
         float rimFog = smoothstep(680.0, 800.0, rimDistKm);
-        vec3 rimFogColor = vec3(0.34, 0.60, 0.92);
-        diffuseColor.rgb = mix(diffuseColor.rgb, rimFogColor, rimFog);`
+        // Horizon atmosphere color matching the sky dome: blue by day, orange at golden
+        // hour, dark at night — so the outer ring dissolves into the sky (looks invisible).
+        float atmDay = smoothstep(-8.0, 14.0, uSunElevation);
+        float atmGolden = smoothstep(-3.0, 6.0, uSunElevation) * (1.0 - smoothstep(8.0, 22.0, uSunElevation));
+        vec3 atmHorizon = mix(vec3(0.08, 0.15, 0.28), vec3(0.54, 0.80, 0.99), atmDay);
+        atmHorizon = mix(atmHorizon, vec3(0.96, 0.62, 0.36), atmGolden * 0.55);
+        diffuseColor.rgb = mix(diffuseColor.rgb, atmHorizon, rimFog);`
       );
     };
   }, []);

@@ -103,7 +103,7 @@ export const AtmosphericSkyDome: React.FC<AtmosphericSkyDomeProps> = ({ sunPosit
 
   return (
     <mesh position={[0, 0, 0]} frustumCulled={false} renderOrder={-10}>
-      <sphereGeometry args={[680000, 48, 32]} />
+      <sphereGeometry args={[3000000, 64, 48]} />
       <shaderMaterial
         ref={matRef}
         uniforms={uniforms}

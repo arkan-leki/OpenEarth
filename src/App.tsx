@@ -84,7 +84,7 @@ export default function App() {
   // Live Satellite and Radar Map Source
   // Default to the HD base map. 'nasa_today' opens on the day's satellite pass, which is
 // routinely 80-90% cloud over this region and hides the map entirely.
-  const [satelliteMode, setSatelliteMode] = useState<SatelliteSourceMode>('hd_base');
+  const [satelliteMode, setSatelliteMode] = useState<SatelliteSourceMode>('radar_live');
   const [satelliteDate, setSatelliteDate] = useState<string>(() => getTodayDateIso(0));
   const [selectedSensor, setSelectedSensor] = useState<string>('VIIRS_SNPP_CorrectedReflectance_TrueColor');
   const [activeRadarGroundTexture, setActiveRadarGroundTexture] = useState<THREE.Texture | null>(null);
@@ -184,7 +184,7 @@ export default function App() {
 
   // Dynamic Sun Position & Shadow state:
   // Default isDaytimeMode to true so the 3D Rayleigh sky is vibrant blue and terrain/clouds are brightly lit
-  const [isDaytimeMode, setIsDaytimeMode] = useState<boolean>(true);
+  const [isDaytimeMode, setIsDaytimeMode] = useState<boolean>(false);
   const [isLiveTime, setIsLiveTime] = useState<boolean>(true);
   const [kurdistanClock, setKurdistanClock] = useState<Date>(() => getNowInKurdistan());
   const [simulatedMinutes, setSimulatedMinutes] = useState<number>(() => {
