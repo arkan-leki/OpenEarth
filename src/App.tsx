@@ -32,12 +32,9 @@ import { worldRectToLonLatBounds } from './utils/realSulaymaniyahTerrain';
 import { GridChunkData, ShaderParameters, Landmark } from './types';
 import {
   SatelliteSourceMode,
-  getTodayDateIso,
-  loadLiveNasaTexture,
-  fetchRainViewerMetadata,
-  createRainViewerRadarCanvas,
-  createRainViewerSatelliteCanvas
+  getTodayDateIso
 } from './services/liveSatelliteService';
+import { fetchEumetsatCloudCanvas } from './services/eumetsatService';
 import {
   loadLiveSatelliteCloudPass,
   buildCombinedLiveWeatherAndCloudTexture,
@@ -93,6 +90,7 @@ export default function App() {
   const [activeRadarGroundTexture, setActiveRadarGroundTexture] = useState<THREE.Texture | null>(null);
   const [liveIrCanvas, setLiveIrCanvas] = useState<HTMLCanvasElement | null>(null);
   const [liveRadarCanvas, setLiveRadarCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [eumetsatCoveragePct, setEumetsatCoveragePct] = useState<number | undefined>(undefined);
 
   const handleChangeSatelliteMode = useCallback((mode: SatelliteSourceMode) => {
     setSatelliteMode(mode);
@@ -147,31 +145,26 @@ export default function App() {
     };
   }, [effectiveSatelliteDate, selectedSensor, weatherPayload]);
 
-  // Load Live RainViewer Doppler Radar & Geostationary Infrared Clouds for 'radar_live'
+  // Load EUMETSAT (Meteosat IODC) IR cloud cover for the Live mode.
+  // Reads cloud cover %, not radar: RainViewer Doppler measures precipitation, a different
+  // quantity than cloud. The ground stays the HD orthomosaic (no radar overlay).
   useEffect(() => {
     let isCurrent = true;
 
-    fetchRainViewerMetadata().then(async (meta) => {
-      if (!isCurrent || !meta) return;
-      const [irCanv, radCanv, radGroundCanv] = await Promise.all([
-        createRainViewerSatelliteCanvas(meta),
-        createRainViewerRadarCanvas(meta, undefined, false),
-        satelliteMode === 'radar_live'
-          ? createRainViewerRadarCanvas(meta, undefined, true)
-          : Promise.resolve(null)
-      ]);
-      if (!isCurrent) return;
-      setLiveIrCanvas(irCanv);
-      setLiveRadarCanvas(radCanv);
-      if (radGroundCanv && satelliteMode === 'radar_live') {
-        const radarTex = new THREE.CanvasTexture(radGroundCanv);
-        radarTex.colorSpace = THREE.SRGBColorSpace;
-        radarTex.anisotropy = 16;
-        radarTex.needsUpdate = true;
-        setActiveRadarGroundTexture(radarTex);
-      } else if (satelliteMode !== 'radar_live') {
-        setActiveRadarGroundTexture(null);
-      }
+    if (satelliteMode !== 'radar_live') {
+      setLiveIrCanvas(null);
+      setLiveRadarCanvas(null);
+      setActiveRadarGroundTexture(null);
+      setEumetsatCoveragePct(undefined);
+      return;
+    }
+
+    fetchEumetsatCloudCanvas().then((result) => {
+      if (!isCurrent || !result) return;
+      setLiveIrCanvas(result.canvas);
+      setLiveRadarCanvas(null);
+      setActiveRadarGroundTexture(null);
+      setEumetsatCoveragePct(result.cloudCoveragePct);
     });
 
     return () => {
@@ -364,10 +357,10 @@ export default function App() {
   // Active cloud coverage percentage for TopBar display across Today, Yesterday, and Live modes
   const activeCloudCoveragePct = useMemo(() => {
     if (satelliteMode === 'radar_live') {
-      return liveCombinedCloud.liveCoveragePct;
+      return eumetsatCoveragePct ?? liveCombinedCloud.liveCoveragePct;
     }
     return satelliteCloudAnalysis?.cloudCoveragePct;
-  }, [satelliteMode, liveCombinedCloud, satelliteCloudAnalysis]);
+  }, [satelliteMode, eumetsatCoveragePct, liveCombinedCloud, satelliteCloudAnalysis]);
 
   // Camera Fly-To handler
   const handleFlyTo = useCallback((target: { pos: [number, number, number]; target: [number, number, number] }) => {

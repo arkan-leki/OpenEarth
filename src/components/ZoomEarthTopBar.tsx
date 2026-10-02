@@ -166,7 +166,7 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
       {/* Center/Right: 3D Map Satellite Source Switcher */}
       {onChangeSatelliteMode && (
         <div className="pointer-events-auto flex flex-wrap items-center bg-slate-950/90 backdrop-blur-xl border border-slate-700/80 p-1 rounded-2xl shadow-xl text-xs font-mono gap-0.5">
-          {/* Primary: Real-Time Live Radar & Observations */}
+          {/* Primary: Real-Time Live Satellite Cloud Cover (EUMETSAT) */}
           <button
             id="btn-mode-radar-live"
             onClick={() => onChangeSatelliteMode('radar_live')}
@@ -175,10 +175,10 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
                 ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold shadow-md shadow-emerald-500/30 ring-1 ring-emerald-300/40'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
             }`}
-            title="100% Real-Time Live Doppler Weather Radar (RainViewer) & Live Open-Meteo Observations (Updated every 10 min)"
+            title="Real-time EUMETSAT Meteosat IR cloud cover & Live Open-Meteo observations (updated every 10 min)"
           >
             <Radio className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
-            <span>Live Radar & Met</span>
+            <span>Live Satellite</span>
             {satelliteMode === 'radar_live' && satelliteCloudCoveragePct !== undefined ? (
               <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-emerald-200 font-bold border border-emerald-400/30">
                 {satelliteCloudCoveragePct}%
