@@ -20,6 +20,8 @@ interface ZoomEarthTopBarProps {
   isSatelliteCloudLoading?: boolean;
   isTodayPending?: boolean;
   actualPassDate?: string;
+  /** Exact observation timestamp of the EUMETSAT frame on screen (e.g. "2026-10-03 14:00Z"). */
+  eumetsatFrameLabel?: string;
   isDaytimeMode?: boolean;
   onToggleDaytimeMode?: () => void;
   onTriggerAdvectionAnim?: () => void;
@@ -42,6 +44,7 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
   isSatelliteCloudLoading = false,
   isTodayPending = false,
   actualPassDate,
+  eumetsatFrameLabel,
   isDaytimeMode = false,
   onToggleDaytimeMode,
   onTriggerAdvectionAnim,
@@ -175,14 +178,25 @@ export const ZoomEarthTopBar: React.FC<ZoomEarthTopBarProps> = ({
                 ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white font-bold shadow-md shadow-emerald-500/30 ring-1 ring-emerald-300/40'
                 : 'text-slate-300 hover:text-white hover:bg-slate-800/80'
             }`}
-            title="Real-time EUMETSAT Meteosat IR cloud cover & Live Open-Meteo observations (updated every 10 min)"
+            title={
+              eumetsatFrameLabel
+                ? `EUMETSAT Meteosat IR cloud cover — observation ${eumetsatFrameLabel}, plus live Open-Meteo observations`
+                : 'Real-time EUMETSAT Meteosat IR cloud cover & Live Open-Meteo observations (updated every 10 min)'
+            }
           >
             <Radio className="w-3.5 h-3.5 text-emerald-300 animate-pulse" />
             <span>Live Satellite</span>
             {satelliteMode === 'radar_live' && satelliteCloudCoveragePct !== undefined ? (
-              <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-emerald-200 font-bold border border-emerald-400/30">
-                {satelliteCloudCoveragePct}%
-              </span>
+              <>
+                <span className="text-[10px] px-1.5 py-0.2 rounded bg-black/40 text-emerald-200 font-bold border border-emerald-400/30">
+                  {satelliteCloudCoveragePct}%
+                </span>
+                {eumetsatFrameLabel && (
+                  <span className="text-[9px] px-1 py-0.2 rounded bg-black/40 text-emerald-300/90 font-mono border border-emerald-400/20 hidden md:inline">
+                    {eumetsatFrameLabel}
+                  </span>
+                )}
+              </>
             ) : (
               <span className="text-[9px] px-1 py-0.2 rounded bg-black/40 text-emerald-300 font-bold border border-emerald-400/30 hidden sm:inline">
                 LIVE NOW

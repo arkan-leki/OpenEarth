@@ -91,6 +91,7 @@ export default function App() {
   const [liveIrCanvas, setLiveIrCanvas] = useState<HTMLCanvasElement | null>(null);
   const [liveRadarCanvas, setLiveRadarCanvas] = useState<HTMLCanvasElement | null>(null);
   const [eumetsatCoveragePct, setEumetsatCoveragePct] = useState<number | undefined>(undefined);
+  const [eumetsatFrameTime, setEumetsatFrameTime] = useState<Date | undefined>(undefined);
 
   const handleChangeSatelliteMode = useCallback((mode: SatelliteSourceMode) => {
     setSatelliteMode(mode);
@@ -166,6 +167,7 @@ export default function App() {
       setLiveRadarCanvas(null);
       setActiveRadarGroundTexture(null);
       setEumetsatCoveragePct(undefined);
+      setEumetsatFrameTime(undefined);
       return;
     }
 
@@ -175,6 +177,7 @@ export default function App() {
       setLiveRadarCanvas(null);
       setActiveRadarGroundTexture(null);
       setEumetsatCoveragePct(result.cloudCoveragePct);
+      setEumetsatFrameTime(result.frameTime);
     });
 
     return () => {
@@ -569,6 +572,11 @@ export default function App() {
           isSatelliteCloudLoading={isSatelliteCloudLoading}
           isTodayPending={satelliteCloudAnalysis?.isTodayPending}
           actualPassDate={satelliteCloudAnalysis?.date}
+          eumetsatFrameLabel={
+            eumetsatFrameTime
+              ? `${eumetsatFrameTime.toISOString().slice(0, 16).replace('T', ' ')}Z`
+              : undefined
+          }
           isDaytimeMode={isDaytimeMode}
           onToggleDaytimeMode={() => setIsDaytimeMode(prev => !prev)}
         />

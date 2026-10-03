@@ -8,3 +8,6 @@ coverage/
 !.env.example
 
 .npm-cache/
+
+# Local EUMETSAT inspection frames (not part of the app)
+eumetsat-sample/
