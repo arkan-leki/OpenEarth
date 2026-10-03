@@ -852,24 +852,11 @@ function valueNoise2D(x: number, y: number): number {
   return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
 }
 
-function fbmLiveCloud2D(u: number, v: number): number {
-  let val = 0.0;
-  let amp = 0.52;
-  let freq = 14.0;
-  for (let o = 0; o < 5; o++) {
-    const n = valueNoise2D(u * freq, v * freq);
-    const ridge = 1.0 - Math.abs(n * 2.0 - 1.0);
-    val += (n * 0.45 + ridge * ridge * 0.55) * amp;
-    freq *= 2.15;
-    amp *= 0.48;
-  }
-  return val;
-}
-
 /**
- * Builds a dedicated Live Clouds & Weather texture for 'radar_live' (Live Radar & Met mode)
- * from live Open-Meteo 9-station meteorology, live RainViewer geostationary IR clouds,
- * and live RainViewer Doppler radar echoes — completely distinct from NASA Today & Yesterday.
+ * Live cloud texture for the EUMETSAT mode.
+ *
+ * Cloud comes ONLY from the EUMETSAT Cloud Mask and rain ONLY from the EUMETSAT h63
+ * precipitation estimate. There is deliberately no procedural cloud generation here.
  */
 export function buildCombinedLiveWeatherAndCloudTexture(
   weatherPayload: KurdistanWeatherPayload,
@@ -931,15 +918,10 @@ export function buildCombinedLiveWeatherAndCloudTexture(
 
       const elevM = sampleRealElevationAtLonLat(lon, lat);
 
-      // 1. Live RainViewer Geostationary Infrared Cloud pixel (if available)
-      let irCloud = 0;
-      if (irData) {
-        const irAlpha = irData[idx + 3];
-        const irLum = 0.299 * irData[idx] + 0.587 * irData[idx + 1] + 0.114 * irData[idx + 2];
-        if (irAlpha > 25 && irLum > 90) {
-          irCloud = Math.min(255, Math.round(((irLum - 85) / 160.0) * (irAlpha / 255.0) * 255));
-        }
-      }
+      // 1. Cloud density from the EUMETSAT Cloud Mask. eumetsatService has already decoded
+      //    the mask palette into a 0..255 density (white cloud -> 255, clear -> 0), so this
+      //    is a direct read — no IR-luminance reinterpretation.
+      const maskCloud = irData ? irData[idx] : 0;
 
       // 2. Live RainViewer Doppler Radar echo
       let radarRain = 0;
@@ -993,32 +975,17 @@ export function buildCombinedLiveWeatherAndCloudTexture(
 
       const localTempC = weightedTemp - Math.max(0, elevM - 500) * 0.0065;
 
-      // Orographic mountain thermal uplift along Zagros peaks + live station cloud cover
-      const orographicFactor = elevM > 1350 ? Math.min(0.28, ((elevM - 1350) / 2200.0) * 0.28) : 0.0;
-      const effectiveLiveCloudTarget = Math.max(weightedCloud, orographicFactor * (weightedHumidity / 45.0));
+      // CLOUD — strictly the EUMETSAT Cloud Mask, nothing else.
+      //
+      // This used to be Math.max(irCloud, stationCloudByte, rain-derived), where
+      // stationCloudByte was an FBM noise field shaped by Open-Meteo station cloud cover plus
+      // an elevation-driven orographic term. That synthesized cloud out of thin air, so the
+      // Live sky showed cloud even where the satellite reported clear — and it kept doing so
+      // on hardcoded fallback values whenever the weather fetch failed.
+      const finalCloud = maskCloud;
 
-      let stationCloudByte = 0;
-      if (effectiveLiveCloudTarget > 0.015) {
-        const fbm = fbmLiveCloud2D(u + 0.37, v + 0.61);
-        const cutoff = Math.max(0.32, 0.66 - effectiveLiveCloudTarget * 0.58);
-        if (fbm > cutoff) {
-          const norm = Math.min(1.0, (fbm - cutoff) / (1.0 - cutoff));
-          stationCloudByte = Math.min(255, Math.round(Math.pow(norm, 0.75) * 245));
-        }
-      }
-
-      const finalCloud = Math.max(
-        irCloud,
-        stationCloudByte,
-        radarRain > 20 ? Math.min(255, 165 + Math.round(radarRain * 0.35)) : 0
-      );
-
-      const stationRainByte =
-        weightedPrecip >= 0.12 && finalCloud > 75
-          ? Math.min(255, Math.round(((weightedPrecip - 0.08) / 5.0) * 255))
-          : 0;
-      // Strictly use real RainViewer Doppler Radar + real Open-Meteo station precipitation (zero fake cloud rain)
-      const finalRain = Math.max(radarRain, stationRainByte);
+      // RAIN — the EUMETSAT h63 precipitation estimate only.
+      const finalRain = radarRain;
 
       if (finalCloud > 25) cloudPixels++;
       if (finalRain > 12) precipPixels++;

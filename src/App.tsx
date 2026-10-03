@@ -15,8 +15,7 @@ import {
   SunPositionResult
 } from './utils/sunPosition';
 import {
-  generateInitialChunkGrid,
-  createWeatherDataTexture
+  generateInitialChunkGrid
 } from './utils/weatherDataPipeline';
 import {
   fetchLiveKurdistanWeather,
@@ -156,9 +155,10 @@ export default function App() {
     };
   }, [satelliteMode, effectiveSatelliteDate, selectedSensor, weatherPayload]);
 
-  // Load EUMETSAT (Meteosat IODC) IR cloud cover for the Live mode.
-  // Reads cloud cover %, not radar: RainViewer Doppler measures precipitation, a different
-  // quantity than cloud. The ground stays the HD orthomosaic (no radar overlay).
+  // Load EUMETSAT (Meteosat IODC) derived products for the Live mode:
+  //  - `clm` Cloud Mask  → cloud density (EUMETSAT's own detection algorithm)
+  //  - `h63` precip      → rain channel (transparent where dry)
+  // Both carry an explicit observation TIME, so the frame on screen has known provenance.
   useEffect(() => {
     let isCurrent = true;
 
@@ -173,8 +173,8 @@ export default function App() {
 
     fetchEumetsatCloudCanvas().then((result) => {
       if (!isCurrent || !result) return;
-      setLiveIrCanvas(result.canvas);
-      setLiveRadarCanvas(null);
+      setLiveIrCanvas(result.cloudCanvas);
+      setLiveRadarCanvas(result.precipCanvas);
       setActiveRadarGroundTexture(null);
       setEumetsatCoveragePct(result.cloudCoveragePct);
       setEumetsatFrameTime(result.frameTime);
@@ -293,13 +293,7 @@ export default function App() {
     return active;
   }, [chunks]);
 
-  // Real multi-channel live weather texture across Kurdistan (Station-interpolated baseline)
-  const weatherTexture = useMemo(() => {
-    const { texture } = createWeatherDataTexture(1024, weatherPayload);
-    return texture;
-  }, [weatherPayload]);
-
-  // Dedicated Live Weather + Live Satellite IR + Live Radar Cloud Texture for 'radar_live' (Live mode)
+  // Dedicated EUMETSAT Live Cloud Texture for 'radar_live' (Live mode)
   const liveCombinedCloud = useMemo(() => {
     return buildCombinedLiveWeatherAndCloudTexture(weatherPayload, liveIrCanvas, liveRadarCanvas, 1024);
   }, [weatherPayload, liveIrCanvas, liveRadarCanvas]);
@@ -313,8 +307,8 @@ export default function App() {
   }, []);
 
   // Active multi-channel weather texture:
-  // - 'nasa_today' & 'nasa_yesterday': cleans previous mode and renders ONLY that day's NASA satellite pass
-  // - 'radar_live': Live clouds from EUMETSAT IR cloud cover + live Open-Meteo stations
+  // - 'nasa_today' & 'nasa_yesterday': renders ONLY that day's NASA satellite pass
+  // - 'radar_live': renders ONLY the EUMETSAT Cloud Mask (no procedural cloud)
   // - 'hd_base': keeps sky clear so the HD Kurdistan basemap is unobstructed
   const activeWeatherTexture = useMemo(() => {
     if (satelliteMode === 'nasa_today' || satelliteMode === 'nasa_yesterday') {
@@ -326,7 +320,7 @@ export default function App() {
     }
     // HD Base is the clean basemap view — no weather overlay, by design.
     return clearWeatherTexture;
-  }, [satelliteMode, satelliteCloudAnalysis, liveCombinedCloud, weatherTexture, clearWeatherTexture]);
+  }, [satelliteMode, satelliteCloudAnalysis, liveCombinedCloud, clearWeatherTexture]);
 
   // Active high-altitude satellite cloud deck texture for Today, Yesterday, and Live modes
   const activeNasaCloudTexture = useMemo(() => {
