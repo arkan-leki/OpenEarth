@@ -364,12 +364,14 @@ export const CloudShader = {
         discard;
       }
 
-      // Was clamped to 68, which silently ignored raymarchSteps settings above that.
-      // Longer marches need more samples to resolve the cloud slab.
-      int steps = clamp(uSteps, 32, 96);
+      // Raised to 128: at 44-68 steps the ~113 m finest FBM octave was undersampled, which
+      // is exactly what produced the visible lines / blockiness across the cloud slab.
+      int steps = clamp(uSteps, 32, 128);
       float stepSize = (tFar - tNear) / float(steps);
 
-      float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+      // Interleaved gradient noise: a far better march-start dither than the old hash,
+      // which left visible banding lines across the cloud slab.
+      float dither = fract(52.9829189 * fract(0.06711056 * gl_FragCoord.x + 0.00583715 * gl_FragCoord.y));
       float t = tNear + stepSize * dither;
 
       vec3 accumulatedColor = vec3(0.0);
@@ -378,7 +380,7 @@ export const CloudShader = {
       float cosTheta = dot(rd, uSunDir);
       float phase = dualLobePhaseHG(cosTheta, 0.62, -0.24, 0.70);
 
-      for (int i = 0; i < 68; i++) {
+      for (int i = 0; i < 128; i++) {
         if (i >= steps) break;
         if (transmittance < 0.06) break;
 

@@ -183,7 +183,11 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
     mat.uniforms.uTime.value = state.clock.elapsedTime;
     mat.uniforms.uCameraPos.value.copy(state.camera.position);
     mat.uniforms.uWeatherData.value = weatherTexture;
-    mat.uniforms.uSteps.value = params.raymarchSteps || 56;
+    // Distance-adaptive step count: full quality at normal viewing distances, easing off
+    // only at extreme zoom-out where the clouds are tiny on screen (keeps the far zoom smooth).
+    const camDist = state.camera.position.length();
+    const stepScale = camDist < 2000000 ? 1.0 : 0.62;
+    mat.uniforms.uSteps.value = Math.max(32, Math.round((params.raymarchSteps || 96) * stepScale));
     mat.uniforms.uWindSpeed.value = params.windSpeed || 0.8;
     mat.uniforms.uHasAnvil.value = classification.hasAnvil ? 1.0 : 0.0;
     mat.uniforms.uGlobeRefXZ.value.set(globeRefXZ[0], globeRefXZ[1]);

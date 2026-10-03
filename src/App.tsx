@@ -42,7 +42,7 @@ import {
 } from './services/satelliteCloudService';
 
 const DEFAULT_SHADER_PARAMS: ShaderParameters = {
-  raymarchSteps: 44,
+  raymarchSteps: 96,
   cloudDensityMultiplier: 1.5,
   absorptionFactor: 0.65,
   sunScatterIntensity: 1.6,
