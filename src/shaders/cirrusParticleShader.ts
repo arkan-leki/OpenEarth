@@ -75,9 +75,12 @@ export const ClusteredCumulusBillboardShader = {
         driftedXZ.y
       );
 
+      // Domain UV for the CURRENT 1600 km map. These were still the old 480x320 km bounds,
+      // so every puff past +/-240 km clamped to a single edge texel and all rendered with
+      // the same cloud strength — a uniform field of identical quads.
       vec2 satUv = clamp(vec2(
-        (aPuffOrigin.x + 240000.0) / 480000.0,
-        (aPuffOrigin.z + 160000.0) / 320000.0
+        (aPuffOrigin.x + 800000.0) / 1600000.0,
+        (aPuffOrigin.z + 800000.0) / 1600000.0
       ), 0.002, 0.998);
 
       vec4 w = texture2D(uWeatherData, satUv);

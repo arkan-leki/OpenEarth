@@ -301,19 +301,19 @@ export default function App() {
 
   // Active multi-channel weather texture:
   // - 'nasa_today' & 'nasa_yesterday': cleans previous mode and renders ONLY that day's NASA satellite pass
-  // - 'radar_live': cleans NASA pass and renders Live Clouds & Weather (Open-Meteo stations + RainViewer IR & Radar)
+  // - 'radar_live': Live clouds from EUMETSAT IR cloud cover + live Open-Meteo stations
   // - 'hd_base': keeps sky clear so the HD Kurdistan basemap is unobstructed
   const activeWeatherTexture = useMemo(() => {
     if (satelliteMode === 'nasa_today' || satelliteMode === 'nasa_yesterday') {
       return satelliteCloudAnalysis?.weatherDataTexture || clearWeatherTexture;
     }
     if (satelliteMode === 'radar_live') {
-      // LIVE combines all three: HD ground (always), live radar on the ground, and cloud
-      // coverage taken from the live SATELLITE pass rather than the radar composite, so the
-      // sky shows real satellite cloud while the ground shows radar echo.
+      // LIVE is driven by the live EUMETSAT cloud cover, NOT the NASA daily pass. Preferring
+      // the NASA pass here meant the badge reported EUMETSAT coverage while the sky actually
+      // rendered a different day's NASA clouds — the two disagreed.
       return (
-        satelliteCloudAnalysis?.weatherDataTexture ||
         liveCombinedCloud.weatherDataTexture ||
+        satelliteCloudAnalysis?.weatherDataTexture ||
         weatherTexture
       );
     }

@@ -86,8 +86,10 @@ export const HighAltitudeCirrusParticles: React.FC<HighAltitudeCirrusParticlesPr
       count = Math.min(MAX_CUMULUS_PUFFS, cloudCells.length * 2);
       for (let i = 0; i < count; i++) {
         const cell = cloudCells[(i * 7) % cloudCells.length];
-        const jitterX = (nextRand() - 0.5) * 4800;
-        const jitterZ = (nextRand() - 0.5) * 4800;
+        // Jitter must exceed the cloud-cell spacing (~12.5 km at 1024 px) or the puffs stay
+        // locked to the sampling grid and read as regular rows/lines from an oblique angle.
+        const jitterX = (nextRand() - 0.5) * 14000;
+        const jitterZ = (nextRand() - 0.5) * 14000;
         const hNorm = nextRand();
 
         // Spread across the whole domain, not the old 480x320 km centre.
