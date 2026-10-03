@@ -121,8 +121,18 @@ export default function App() {
     return satelliteDate;
   }, [satelliteMode, satelliteDate]);
 
-  // Ingest NASA satellite orbital pass for Today, Yesterday, or selected Archive date and extract 3D clouds
+  // Ingest NASA satellite orbital pass for Today / Yesterday and extract 3D clouds.
+  //
+  // Scheduled to the NASA modes ONLY. Live mode is dedicated to EUMETSAT, and this used to
+  // run in every mode — which is how today's NASA pass could bleed into the live sky.
   useEffect(() => {
+    const isNasaMode = satelliteMode === 'nasa_today' || satelliteMode === 'nasa_yesterday';
+    if (!isNasaMode) {
+      setSatelliteCloudAnalysis(null);
+      setIsSatelliteCloudLoading(false);
+      return;
+    }
+
     let isCurrent = true;
     setIsSatelliteCloudLoading(true);
     // Clean previous date's clouds immediately when switching between Today and Yesterday
@@ -143,7 +153,7 @@ export default function App() {
     return () => {
       isCurrent = false;
     };
-  }, [effectiveSatelliteDate, selectedSensor, weatherPayload]);
+  }, [satelliteMode, effectiveSatelliteDate, selectedSensor, weatherPayload]);
 
   // Load EUMETSAT (Meteosat IODC) IR cloud cover for the Live mode.
   // Reads cloud cover %, not radar: RainViewer Doppler measures precipitation, a different
@@ -308,14 +318,8 @@ export default function App() {
       return satelliteCloudAnalysis?.weatherDataTexture || clearWeatherTexture;
     }
     if (satelliteMode === 'radar_live') {
-      // LIVE is driven by the live EUMETSAT cloud cover, NOT the NASA daily pass. Preferring
-      // the NASA pass here meant the badge reported EUMETSAT coverage while the sky actually
-      // rendered a different day's NASA clouds — the two disagreed.
-      return (
-        liveCombinedCloud.weatherDataTexture ||
-        satelliteCloudAnalysis?.weatherDataTexture ||
-        weatherTexture
-      );
+      // Live is dedicated to EUMETSAT: only the live cloud texture, no NASA pass fallback.
+      return liveCombinedCloud.weatherDataTexture;
     }
     // HD Base is the clean basemap view — no weather overlay, by design.
     return clearWeatherTexture;

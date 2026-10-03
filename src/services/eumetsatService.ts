@@ -12,8 +12,18 @@ import { MIN_LON, MAX_LON, MIN_LAT, MAX_LAT } from '../utils/realSulaymaniyahTer
 
 const EUMETVIEW_WMS = 'https://view.eumetsat.int/geoserver/wms';
 
-/** Brightness threshold (0..255) above which an IR pixel is counted as cloud. */
-const IR_CLOUD_LUM_THRESHOLD = 150;
+/**
+ * IR luminance (0..255) at or below which the scene reads as clear, warm ground, and the
+ * span up to a fully cold cloud top.
+ *
+ * EUMETSAT's ir108 is mostly DARK over this region (mean ~35, because the hot desert surface
+ * reads warm). The downstream cloud pipeline expects a bright-cloud image, so the raw values
+ * must be stretched into a real 0..1 density — otherwise it finds no cloud at all.
+ */
+const IR_CLEAR_LUM = 110;
+const IR_CLOUD_SPAN = 80;
+/** Density above which a pixel counts toward the reported cloud-cover percentage. */
+const CLOUD_COVER_DENSITY = 0.35;
 
 export interface EumetsatCloudResult {
   /** Grayscale IR image (white = cold cloud tops). */
@@ -59,14 +69,26 @@ export async function fetchEumetsatCloudCanvas(): Promise<EumetsatCloudResult | 
     if (!ctx) return null;
     ctx.drawImage(img, 0, 0);
 
-    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
     const total = canvas.width * canvas.height;
     let cloudPixels = 0;
+
     for (let i = 0; i < data.length; i += 4) {
       const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      if (lum > IR_CLOUD_LUM_THRESHOLD) cloudPixels++;
+      // Normalize into a 0..1 cloud density: warm (clear) ground -> 0, cold cloud top -> 1.
+      const density = Math.min(1, Math.max(0, (lum - IR_CLEAR_LUM) / IR_CLOUD_SPAN));
+      const v = Math.round(density * 255);
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 255;
+      if (density > CLOUD_COVER_DENSITY) cloudPixels++;
     }
+    ctx.putImageData(imageData, 0, 0);
+
     const cloudCoveragePct = Math.round((cloudPixels / total) * 1000) / 10;
+    console.info(`[EUMETSAT] ir108 cloud cover ${cloudCoveragePct}% (${canvas.width}x${canvas.height})`);
 
     return { canvas, cloudCoveragePct };
   } catch (err) {
