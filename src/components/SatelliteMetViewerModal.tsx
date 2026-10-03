@@ -41,6 +41,7 @@ import {
   loadRobustSatelliteImage,
   isBlankSatelliteImage
 } from '../services/liveSatelliteService';
+import { fetchEumetsatLayerFrame } from '../services/eumetsatService';
 
 export type MetLayerType = 'composite' | 'radar' | 'clouds' | 'temperature' | 'satellite';
 
@@ -83,6 +84,10 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
   const [selectedDate, setSelectedDate] = useState<string>(activeSatelliteDate || todayIso);
   const [selectedSensor, setSelectedSensor] = useState<string>('VIIRS_SNPP_CorrectedReflectance_TrueColor');
   const [useHdBase, setUseHdBase] = useState<boolean>(activeSatelliteMode === 'hd_base');
+  /** Live EUMETSAT source, mirroring the 3D scene's Live mode. */
+  const [useEumetsatLive, setUseEumetsatLive] = useState<boolean>(
+    activeSatelliteMode === 'radar_live'
+  );
 
   // Sync modal state when opened or when parent props change
   useEffect(() => {
@@ -93,6 +98,10 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
 
   useEffect(() => {
     setUseHdBase(activeSatelliteMode === 'hd_base');
+  }, [activeSatelliteMode]);
+
+  useEffect(() => {
+    setUseEumetsatLive(activeSatelliteMode === 'radar_live');
   }, [activeSatelliteMode]);
 
   const [orbitalStatusNote, setOrbitalStatusNote] = useState<string>('');
@@ -152,6 +161,25 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
       return;
     }
 
+    // LIVE — EUMETSAT Meteosat, the same source the 3D Live mode renders from.
+    if (useEumetsatLive) {
+      fetchEumetsatLayerFrame().then((frame) => {
+        if (!isCurrent) return;
+        if (!frame) {
+          setImageLoading(false);
+          setImageLoadError(true);
+          return;
+        }
+        const stamp = `${frame.frameTime.toISOString().slice(0, 16).replace('T', ' ')}Z`;
+        setCurrentSatImage(frame.image);
+        setImageLoading(false);
+        setIsTodayPending(false);
+        setActualPassDate(stamp);
+        setOrbitalStatusNote(`EUMETSAT Meteosat IODC — live cloud imagery (observation ${stamp})`);
+      });
+      return;
+    }
+
     loadRobustSatelliteImage(selectedSensor, selectedDate)
       .then((res) => {
         if (!isCurrent) return;
@@ -171,7 +199,7 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
     return () => {
       isCurrent = false;
     };
-  }, [isOpen, selectedDate, selectedSensor, useHdBase]);
+  }, [isOpen, selectedDate, selectedSensor, useHdBase, useEumetsatLive]);
 
   // Keyboard shortcut: close with Escape
   useEffect(() => {
@@ -470,14 +498,20 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
 
             {/* Historical Archive Pass Date Picker */}
             <select
-              value={useHdBase ? 'hd_base' : selectedDate}
+              value={useHdBase ? 'hd_base' : useEumetsatLive ? 'live_eumetsat' : selectedDate}
               onChange={(e) => {
                 const val = e.target.value;
                 if (val === 'hd_base') {
                   setUseHdBase(true);
+                  setUseEumetsatLive(false);
                   if (onChangeSatelliteMode) onChangeSatelliteMode('hd_base');
+                } else if (val === 'live_eumetsat') {
+                  setUseHdBase(false);
+                  setUseEumetsatLive(true);
+                  if (onChangeSatelliteMode) onChangeSatelliteMode('radar_live');
                 } else {
                   setUseHdBase(false);
+                  setUseEumetsatLive(false);
                   setSelectedDate(val);
                   if (onSelectSatelliteDate) onSelectSatelliteDate(val);
                   if (onChangeSatelliteMode) {
@@ -486,8 +520,9 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
                 }
               }}
               className="bg-slate-900 border border-slate-800 text-indigo-300 text-xs px-2 py-1 rounded-lg cursor-pointer focus:outline-none focus:border-indigo-500"
-              title="Select any historical NASA satellite pass to render in 2D and 3D"
+              title="Select the satellite source to render in 2D and 3D"
             >
+              <option value="live_eumetsat">● LIVE — EUMETSAT Meteosat (clouds + rain)</option>
               <option value={todayIso}>Pass: Today ({todayIso})</option>
               <option value={yesterdayIso}>Pass: Yesterday ({yesterdayIso})</option>
               {LOCAL_NASA_HISTORY_DATES.map((d) => (
@@ -498,7 +533,7 @@ export const SatelliteMetViewerModal: React.FC<SatelliteMetViewerModalProps> = (
               <option value="hd_base">Kurdistan HD Orthomosaic Base</option>
             </select>
 
-            {!useHdBase && (
+            {!useHdBase && !useEumetsatLive && (
               <select
                 value={activeSensor || selectedSensor}
                 onChange={(e) => {

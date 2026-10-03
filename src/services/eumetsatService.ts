@@ -168,3 +168,33 @@ export async function fetchEumetsatCloudCanvas(): Promise<EumetsatCloudResult | 
   console.warn('[EUMETSAT] no cloud-mask frame available in the recent window');
   return null;
 }
+
+/**
+ * Raw channel shown as the picture in the 2D imagery viewer.
+ *
+ * This is the visual IR 10.8 µm frame — the 3D cloud field itself is driven by the decoded
+ * Cloud Mask above, but a classified mask reads as a flat colour map, not as imagery.
+ */
+export const EUMETSAT_VISIBLE_LAYER = 'msg_iodc:ir108';
+
+export interface EumetsatLayerFrame {
+  image: HTMLImageElement;
+  frameTime: Date;
+}
+
+/** Loads a raw EUMETSAT layer frame for display, newest published frame first. */
+export async function fetchEumetsatLayerFrame(
+  layer: string = EUMETSAT_VISIBLE_LAYER
+): Promise<EumetsatLayerFrame | null> {
+  for (const frameTime of candidateFrameTimes()) {
+    try {
+      const img = await loadImage(buildWmsUrl(layer, frameTime));
+      if (!img.width || !img.height) throw new Error('empty frame');
+      return { image: img, frameTime };
+    } catch {
+      // Not published yet, or outside the retention window — try the next older frame.
+    }
+  }
+  console.warn(`[EUMETSAT] no ${layer} frame available in the recent window`);
+  return null;
+}
