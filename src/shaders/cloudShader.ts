@@ -346,20 +346,10 @@ export const CloudShader = {
       }
 
       float tNear = max(0.0, hit.x);
-      // March distance. This was a hardcoded 440 km, sized for the original 480x320 km map
-      // where it covered the whole domain. On the 1600 km map it capped clouds to a 440 km
-      // radius around the camera, so sky clouds only appeared over the central region no
-      // matter how much cloud the density data held (measured: outer bands carry 15.2% cloud
-      // vs 9.7% in the centre, yet none of it rendered).
-      // 440 km was the original cap, sized for the 480 km map - it confined clouds to the
-      // central region. Marching the full 1600 km domain with enough samples to resolve a
-      // 1.8 km slab dropped the frame rate to 1.2 fps, so the march is capped at 60% of the
-      // domain: clouds now reach well past the old limit without the full-domain cost.
-      // 440 km was the original cap, sized for the 480 km map - it confined clouds to the
-      // central region. Marching the full 1600 km domain with enough samples to resolve a
-      // 1.8 km slab dropped the frame rate to 1.2 fps, so the march is capped at 60% of the
-      // domain: clouds now reach well past the old limit without the full-domain cost.
-      float tFar = min(hit.y, uDomainSizeXZ.x * 0.60);
+      // March the volume's full depth. This used to be capped at 60% of the domain, which
+      // truncated far-side samples on top of the box floor that already cut cloud at ~410 km.
+      // The box itself bounds the range now, so no extra cap is needed.
+      float tFar = hit.y;
       if (tNear >= tFar) {
         discard;
       }

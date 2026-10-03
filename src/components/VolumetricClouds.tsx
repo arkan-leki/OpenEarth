@@ -10,8 +10,22 @@ import {
   DOMAIN_WIDTH_METERS,
   DOMAIN_HEIGHT_METERS,
   HALF_DOMAIN_WIDTH,
-  HALF_DOMAIN_HEIGHT
+  HALF_DOMAIN_HEIGHT,
+  EARTH_CURVATURE_DIVISOR
 } from '../utils/realSulaymaniyahTerrain';
+
+/**
+ * How far the Earth's curvature drops the cloud layer between the map centre and the rim, in
+ * metres: d² / 2R at d = 800 km is 50,229 m.
+ *
+ * The cloud volume used to reach only 11,500 m below the cloud base — sized for the old 480 km
+ * map. On the 1600 km map the curved layer falls below that floor past a ~410 km radius, so
+ * cloud stopped partway out no matter how much cloud the data held.
+ */
+const MAP_EDGE_CURVATURE_DROP_M =
+  (HALF_DOMAIN_WIDTH * HALF_DOMAIN_WIDTH) / EARTH_CURVATURE_DIVISOR;
+/** Small margin under the deepest point so the rim is never clipped. */
+const CLOUD_BOX_FLOOR_M = MAP_EDGE_CURVATURE_DROP_M + 500;
 
 interface VolumetricCloudsProps {
   weatherTexture: THREE.Texture;
@@ -35,8 +49,9 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
   const lightningFlash = useRef(0);
 
   const { baseAltitudeM, topAltitudeM, thicknessM } = classification;
-  // Expand vertical bounding box downward by 11,500m to enclose clouds that curve down over the 480km x 320km Earth Globe
-  const boxBottomY = baseAltitudeM - 11500;
+  // Reach as far down as the cloud layer actually curves over the full 800 km radius, so the
+  // whole map renders instead of cloud being culled at a ~410 km ring.
+  const boxBottomY = baseAltitudeM - CLOUD_BOX_FLOOR_M;
   const boxTopY = topAltitudeM + 200;
   const boxHeight = boxTopY - boxBottomY;
   const boxCenterY = boxBottomY + boxHeight / 2;
@@ -53,7 +68,7 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
       uSkyColor: { value: new THREE.Color('#3b82f6') },
       // Sized from the domain constants, not hardcoded: the old fixed box (-240000..240000)
       // only covered the centre of the map, so clouds never reached the edges.
-      uBoxMin: { value: new THREE.Vector3(-HALF_DOMAIN_WIDTH, baseAltitudeM - 11500, -HALF_DOMAIN_HEIGHT) },
+      uBoxMin: { value: new THREE.Vector3(-HALF_DOMAIN_WIDTH, baseAltitudeM - CLOUD_BOX_FLOOR_M, -HALF_DOMAIN_HEIGHT) },
       uBoxMax: { value: new THREE.Vector3(HALF_DOMAIN_WIDTH, topAltitudeM + 200, HALF_DOMAIN_HEIGHT) },
       uDomainMinXZ: { value: new THREE.Vector2(-HALF_DOMAIN_WIDTH, -HALF_DOMAIN_HEIGHT) },
       uDomainSizeXZ: { value: new THREE.Vector2(DOMAIN_WIDTH_METERS, DOMAIN_HEIGHT_METERS) },
@@ -157,7 +172,7 @@ export const VolumetricClouds: React.FC<VolumetricCloudsProps> = ({
       overwrite: 'auto'
     });
     gsap.to(mat.uniforms.uBoxMin.value, {
-      y: baseAltitudeM - 11500,
+      y: baseAltitudeM - CLOUD_BOX_FLOOR_M,
       duration: 1.35,
       ease: 'power2.inOut',
       overwrite: 'auto'
