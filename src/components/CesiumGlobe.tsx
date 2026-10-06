@@ -7,13 +7,17 @@ import {
   CloudMaskExtent,
   createCloudOverlay,
   createTiledEumetsatLayer,
-  createPolarCloudLayer
+  createPolarBrightnessFadedOverlay
 } from '../services/cesiumClouds';
 import {
   resolveEumetsatFrameTime,
   fetchEumetsatCloudMaskExtent,
+  fetchPolarCanvas,
+  resolvePolarFrameTime,
   IODC_DISC_BBOX,
-  FES_WEST_BBOX
+  FES_WEST_BBOX,
+  GLOBAL_BBOX,
+  KURDISTAN_BBOX
 } from '../services/eumetsatService';
 
 /**
@@ -53,20 +57,19 @@ export interface GlobeStatus {
   terrainFailed: number;
 }
 
+export type GlobeMode = 'live' | 'nasa' | 'radar';
+
 interface CesiumGlobeProps {
-  baseMap: BaseMapId;
-  /** Paint the EUMETSAT cloud mask exactly as published. */
-  showClouds: boolean;
-  /** Paint the EUMETSAT precipitation estimate — the radar layer. */
-  showPrecip: boolean;
-  /** City labels and boundaries, drawn over everything else. */
-  showLabels: boolean;
-  /** Date for the NASA imagery layers, `YYYY-MM-DD`. */
+  /**
+   * Three views, one switch:
+   *   live  — HD satellite ground + Metop polar + Meteosat cloud, all at FULL opacity, live
+   *   nasa  — HD NASA imagery for a chosen date, no weather paint on top
+   *   radar — HD satellite ground + EUMETSAT precipitation, stepped through hours
+   */
+  mode: GlobeMode;
+  /** Date for the NASA view, `YYYY-MM-DD`. */
   nasaDate: string;
-  showSky: boolean;
-  lighting: boolean;
-  dayMode: 'live' | 'noon';
-  /** How far back to ask EUMETSAT for a frame: 0 = live, 6 = six hours ago, and so on. */
+  /** How far back the radar view asks EUMETSAT for a frame: 0 = live. */
   frameHoursAgo: number;
   onStatus?: (status: GlobeStatus) => void;
 }
@@ -74,14 +77,8 @@ interface CesiumGlobeProps {
 const EUMETVIEW_CREDIT = 'EUMETSAT Meteosat IODC';
 
 export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
-  baseMap,
-  showClouds,
-  showPrecip,
-  showLabels,
+  mode,
   nasaDate,
-  showSky,
-  lighting,
-  dayMode,
   frameHoursAgo,
   onStatus
 }) => {
@@ -94,6 +91,9 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
   const [ready, setReady] = useState(false);
   const [coveragePct, setCoveragePct] = useState<number | null>(null);
   const [frameTime, setFrameTime] = useState<Date | null>(null);
+  /** Resolved separately from the Meteosat frame: polar swaths need a much older timestamp. */
+  const [polarTime, setPolarTime] = useState<Date | null>(null);
+  const [polarCanvas, setPolarCanvas] = useState<HTMLCanvasElement | null>(null);
   /** One cloud overlay per satellite disc — two discs cover far more of the planet than one. */
   const [overlays, setOverlays] = useState<{
     clouds: Array<{ canvas: HTMLCanvasElement; extent: CloudMaskExtent }>;
@@ -191,10 +191,21 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       // The two products are decoded once per frame time and rebuilt into transparent
       // overlays. They are single images rather than tile layers, so this is two fetches per
       // time change, not a stream.
-      // Both discs, in parallel, from the same published frame time.
-      const [iodc, fes] = await Promise.all([
+      /*
+       * Three mask fetches, from the same published frame time.
+       *
+       * The two discs give coverage; the third is a HIGH-RESOLUTION patch over Kurdistan. The
+       * discs are 1024px across 163° — about 11 km per pixel — which is far too coarse to see
+       * anything local. The same product over a 17.8° box at 1536px is roughly 1 km per pixel,
+       * an order of magnitude sharper, at a fraction of the transfer.
+       *
+       * It is a fixed extent, not camera-driven, so it costs one fetch per time change rather
+       * than one per camera move — the per-move version caused visible flashing and was removed.
+       */
+      const [iodc, fes, kurdistan] = await Promise.all([
         fetchEumetsatCloudMaskExtent(t, IODC_DISC_BBOX, 1024, 1024),
-        fetchEumetsatCloudMaskExtent(t, FES_WEST_BBOX, 1024, 1024, 0, 'msg_fes:clm')
+        fetchEumetsatCloudMaskExtent(t, FES_WEST_BBOX, 1024, 1024, 0, 'msg_fes:clm'),
+        fetchEumetsatCloudMaskExtent(t, KURDISTAN_BBOX, 1536, 1536)
       ]);
       if (!current) return;
 
@@ -202,7 +213,11 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       setOverlays({
         clouds: [
           ...(iodc ? [{ canvas: iodc.canvas, extent: IODC_DISC_BBOX as CloudMaskExtent }] : []),
-          ...(fes ? [{ canvas: fes.canvas, extent: FES_WEST_BBOX as CloudMaskExtent }] : [])
+          ...(fes ? [{ canvas: fes.canvas, extent: FES_WEST_BBOX as CloudMaskExtent }] : []),
+          // Pushed last so the sharp patch paints on top of the coarse disc underneath it.
+          ...(kurdistan
+            ? [{ canvas: kurdistan.canvas, extent: KURDISTAN_BBOX as CloudMaskExtent }]
+            : [])
         ]
       });
     })().catch((err) => console.warn('[Cesium] overlay data unavailable:', err));
@@ -211,6 +226,22 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       current = false;
     };
   }, [frameHoursAgo]);
+
+  // Polar imagery is resolved on its own clock, once.
+  useEffect(() => {
+    let current = true;
+    resolvePolarFrameTime()
+      .then(async (t) => {
+        if (!current || !t) return;
+        setPolarTime(t);
+        const canvas = await fetchPolarCanvas(t);
+        if (current) setPolarCanvas(canvas);
+      })
+      .catch((err) => console.warn('[Cesium] polar frame unavailable:', err));
+    return () => {
+      current = false;
+    };
+  }, []);
 
   // ---- The paint stack ----------------------------------------------------------------------
   //
@@ -223,59 +254,59 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     const layers = viewer.imageryLayers;
     layers.removeAll();
 
-    // 0 — the ground.
-    layers.add(createBaseMapLayer(baseMap, nasaDate), 0);
+    // 0 — the ground. NASA view swaps it for a dated NASA pass; the others use HD satellite.
+    if (mode === 'nasa') {
+      layers.add(createBaseMapLayer('nasa_today', nasaDate), 0);
+    } else {
+      layers.add(createBaseMapLayer('esri'), 0);
+    }
     let index = 1;
 
-    /**
-     * Weather paint is shown ONLY over the satellite ground.
-     *
-     * The NASA layers are whole-day composites from one instrument; the EUMETSAT paint is a
-     * single 15-minute frame from another. Overlaying them would put a rain field on a map from
-     * a different day, with nothing on screen to say so — misleading in a way that silence makes
-     * worse. In the NASA modes the imagery stands alone.
+    /*
+     * 1 — LIVE view: the polar image faded by brightness. Dark greys fall away to transparent,
+     * whites stay at full strength, and every pixel in between is the satellite's own.
      */
-    const paintAllowed = baseMap === 'esri';
-
-    // 1 — GLOBAL cloud from the polar orbiter, so no part of the planet is left bare.
-    if (paintAllowed && showClouds && frameTime) {
-      // Correct attribution: this layer is Metop, not Meteosat.
-      layers.add(createPolarCloudLayer(frameTime, 'EUMETSAT Metop (polar orbiter)'), index++);
+    if (mode === 'live' && polarCanvas) {
+      const polar = createPolarBrightnessFadedOverlay(
+        polarCanvas,
+        GLOBAL_BBOX,
+        'EUMETSAT Metop (polar orbiter)',
+        1
+      );
+      if (polar) layers.add(polar, index++);
     }
 
-    // 2 — cloud mask, one overlay per disc: white, transparent, green removed. Painted over the
-    // polar layer because inside its discs it is the more precise product.
-    if (paintAllowed && showClouds) {
+    // 2 — RADAR view: the Meteosat cloud mask AND the precipitation layer, together.
+    if (mode === 'radar') {
       for (const disc of overlays.clouds) {
-        const cloud = createCloudOverlay(disc.canvas, disc.extent, EUMETVIEW_CREDIT, 0.9);
+        const cloud = createCloudOverlay(disc.canvas, disc.extent, EUMETVIEW_CREDIT, 1);
         if (cloud) layers.add(cloud, index++);
+      }
+      if (frameTime) {
+        layers.add(
+          createTiledEumetsatLayer('msg_iodc:h63', frameTime, IODC_DISC_BBOX, EUMETVIEW_CREDIT, true),
+          index++
+        );
       }
     }
 
-    // 3 — precipitation: EUMETSAT's own image pasted on, desaturated. Nothing else applied.
-    if (paintAllowed && showPrecip && frameTime) {
-      layers.add(
-        createTiledEumetsatLayer('msg_iodc:h63', frameTime, IODC_DISC_BBOX, EUMETVIEW_CREDIT, true),
-        index++
-      );
-    }
-
-    // 4 — labels last, so place names read on top of cloud and rain rather than under them.
-    if (showLabels) layers.add(createLabelLayer(), index++);
-  }, [baseMap, nasaDate, frameTime, showClouds, showPrecip, showLabels, overlays, ready]);
+    // 3 — labels last, so place names read on top of whatever is painted.
+    layers.add(createLabelLayer(), index++);
+  }, [mode, nasaDate, polarCanvas, frameTime, overlays, ready]);
 
   // ---- Sky, sun and relief ------------------------------------------------------------------
+  // Sky is always on: a bare globe with no atmosphere reads as a rendering fault.
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
     const scene = viewer.scene;
-    scene.skyAtmosphere.show = showSky;
-    if (scene.skyBox) scene.skyBox.show = showSky;
-    scene.sun.show = showSky;
-    scene.moon.show = showSky;
-    scene.fog.enabled = showSky;
-    scene.globe.showGroundAtmosphere = showSky;
-  }, [showSky, ready]);
+    scene.skyAtmosphere.show = true;
+    if (scene.skyBox) scene.skyBox.show = true;
+    scene.sun.show = true;
+    scene.moon.show = true;
+    scene.fog.enabled = true;
+    scene.globe.showGroundAtmosphere = true;
+  }, [ready]);
 
   /**
    * Live day/night. Cesium shades the globe from the real sun, so the ground genuinely darkens
@@ -289,22 +320,19 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
     const globe = viewer.scene.globe;
-    globe.enableLighting = lighting;
-    globe.dynamicAtmosphereLighting = lighting;
+    globe.enableLighting = true;
+    globe.dynamicAtmosphereLighting = true;
     globe.dynamicAtmosphereLightingFromSun = true;
     // Keep lit ground near full brightness; the darkness should come from the terminator, not
     // from a blanket dimming of the day side.
     globe.lambertDiffuseMultiplier = 0.9;
-  }, [lighting, ready]);
+  }, [ready]);
 
   useEffect(() => {
     const viewer = viewerRef.current;
     if (!viewer || viewer.isDestroyed()) return;
-    viewer.clock.currentTime =
-      dayMode === 'noon'
-        ? Cesium.JulianDate.fromDate(kurdistanNoonUtc())
-        : Cesium.JulianDate.now();
-  }, [dayMode, ready]);
+    viewer.clock.currentTime = Cesium.JulianDate.now();
+  }, [ready]);
 
   // ---- Report status upward for the HUD -----------------------------------------------------
   useEffect(() => {

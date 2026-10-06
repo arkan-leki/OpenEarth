@@ -105,6 +105,23 @@ export const FES_DISC_BBOX: LonLatBbox = {
  * the western slice (-81.3 to -35.8) makes the pair tile the planet edge to edge instead of
  * stacking on top of each other.
  */
+/**
+ * Metop's infrared channel — the polar layer that covers every longitude.
+ *
+ * Back to `ir108` deliberately. It is grey, but that grey is the point: satellite IR is displayed
+ * inverted (cold = white, warm = black), so brightness IS a cloud signal and the dark end can be
+ * knocked out to drop the ground. A colour composite has no such single channel to key on.
+ */
+export const POLAR_LAYER = 'eps:m01_ir108';
+
+/** A whole-world probe extent, for checking whether a polar frame carries anything. */
+export const GLOBAL_BBOX: LonLatBbox = {
+  minLon: -180,
+  minLat: -80,
+  maxLon: 180,
+  maxLat: 80
+};
+
 export const FES_WEST_BBOX: LonLatBbox = {
   minLon: -81.3,
   minLat: -81.3,
@@ -382,6 +399,66 @@ export async function fetchEumetsatPrecipExtent(
     return toCanvas(img, true);
   } catch (err) {
     console.warn('[EUMETSAT] precipitation for the requested extent unavailable:', err);
+    return null;
+  }
+}
+
+/**
+ * Finds the newest POLAR frame that actually carries data.
+ *
+ * Metop cannot use the Meteosat frame time. A geostationary satellite images the same disc
+ * continuously, so the newest frame is always complete; a polar orbiter only has the swaths it
+ * happened to fly over, so the last couple of hours are routinely EMPTY and occasional passes
+ * are missing altogether (measured: 1h and 2h ago empty, 4h and 6h ago full, 9h ago empty again).
+ *
+ * Feeding it the Meteosat timestamp is why the global layer painted nothing and only the Meteosat
+ * discs appeared — half the planet bare.
+ *
+ * A frame is accepted only if it decodes to real pixels, because an empty frame is still a
+ * perfectly valid PNG, so size and status cannot distinguish them.
+ */
+export async function resolvePolarFrameTime(maxHoursBack = 24): Promise<Date | null> {
+  for (let hours = 3; hours <= maxHoursBack; hours++) {
+    const t = new Date(Date.now() - hours * 3_600_000);
+    try {
+      const img = await loadImage(buildWmsUrl(POLAR_LAYER, t, 128, 128, GLOBAL_BBOX));
+      if (!img.width || !img.height) continue;
+
+      const probe = toCanvas(img, true);
+      const ctx = probe.getContext('2d', { willReadFrequently: true });
+      if (!ctx) continue;
+      const data = ctx.getImageData(0, 0, probe.width, probe.height).data;
+
+      let lit = 0;
+      for (let i = 3; i < data.length; i += 4) if (data[i] > 10) lit++;
+      if (lit / (probe.width * probe.height) > 0.05) return t;
+    } catch {
+      // no pass at this time — keep walking back
+    }
+  }
+  console.warn('[EUMETSAT] no polar frame with data found in the last day');
+  return null;
+}
+
+/**
+ * The polar IR frame as raw pixels, for client-side transparency.
+ *
+ * Unlike the tiled polar layer this is a single image over a whole-world extent, because keying
+ * transparency on brightness means reading the pixels — which Cesium's tile pipeline cannot do.
+ * That costs sharpness at high zoom: this trades the streamed tiles for the transparency trick.
+ */
+export async function fetchPolarCanvas(
+  frameTime: Date,
+  bbox: LonLatBbox = GLOBAL_BBOX,
+  width = 1600,
+  height = 800
+): Promise<HTMLCanvasElement | null> {
+  try {
+    const img = await loadImage(buildWmsUrl(POLAR_LAYER, frameTime, width, height, bbox));
+    if (!img.width || !img.height) return null;
+    return toCanvas(img, true);
+  } catch (err) {
+    console.warn('[EUMETSAT] polar frame unavailable for decoding:', err);
     return null;
   }
 }

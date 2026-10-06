@@ -4,7 +4,7 @@ import { ZoomEarthTopBar } from './components/ZoomEarthTopBar';
 import { ZoomEarthFloatingControls } from './components/ZoomEarthFloatingControls';
 import { KurdistanWeatherCard } from './components/KurdistanWeatherCard';
 import { WeatherSimulationView } from './components/WeatherSimulationView';
-import { GlobeStatus } from './components/CesiumGlobe';
+import { GlobeStatus, GlobeMode } from './components/CesiumGlobe';
 import { BASE_MAPS, BaseMapId, isoDaysAgo } from './services/cesiumBaseMaps';
 
 /**
@@ -34,23 +34,17 @@ const LEGACY_VIEW =
  * React tree — so the two views are reached by navigation, never by a live swap.
  */
 const GlobeView: React.FC = () => {
-  const [baseMap, setBaseMap] = useState<BaseMapId>('esri');
-  const [showClouds, setShowClouds] = useState(true);
-  const [showPrecip, setShowPrecip] = useState(true);
-  const [showLabels, setShowLabels] = useState(true);
-  const [showSky, setShowSky] = useState(true);
-  // On by default: the live day/night shift is the point of the live view.
-  const [lighting, setLighting] = useState(true);
-  const [dayMode, setDayMode] = useState<'live' | 'noon'>('live');
-  const [status, setStatus] = useState<GlobeStatus | null>(null);
-  // Closed by default: an open panel covers a large part of the globe and swallows the
-  // drags and wheel events meant for the camera.
-  const [panelOpen, setPanelOpen] = useState(false);
-  /** 0 = live, otherwise how many hours back to ask EUMETSAT for. */
-  const [hoursAgo, setHoursAgo] = useState(0);
-  /** Date for the NASA layers, seeded to yesterday (the newest pass usually published). */
+  /** Three views, one switch — no toggle sprawl. */
+  const [mode, setMode] = useState<GlobeMode>('live');
   const [nasaDate, setNasaDate] = useState(() => isoDaysAgo(1));
-  const isNasaGround = baseMap === 'nasa_today' || baseMap === 'nasa_yesterday';
+  const [hoursAgo, setHoursAgo] = useState(0);
+  const [status, setStatus] = useState<GlobeStatus | null>(null);
+
+  const MODES: Array<{ id: GlobeMode; label: string; hint: string }> = [
+    { id: 'live', label: 'SATELLITE LIVE', hint: 'HD satellite ground + Metop polar in colour' },
+    { id: 'nasa', label: 'NASA HD', hint: 'HD NASA imagery for a chosen date' },
+    { id: 'radar', label: 'EUMETSAT RADAR', hint: 'Meteosat cloud mask + EUMETSAT precipitation, stepped through hours' }
+  ];
 
   const TIME_STEPS = [
     { hours: 0, label: 'LIVE' },
@@ -102,14 +96,8 @@ const GlobeView: React.FC = () => {
         }
       >
         <CesiumGlobe
-          baseMap={baseMap}
-          showClouds={showClouds}
-          showPrecip={showPrecip}
-          showLabels={showLabels}
+          mode={mode}
           nasaDate={nasaDate}
-          showSky={showSky}
-          lighting={lighting}
-          dayMode={dayMode}
           frameHoursAgo={hoursAgo}
           onStatus={setStatus}
         />
@@ -126,12 +114,12 @@ const GlobeView: React.FC = () => {
           </div>
 
           <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1 flex items-center gap-0.5 pointer-events-auto">
-            {BASE_MAPS.map((m) => (
+            {MODES.map((m) => (
               <button
                 key={m.id}
-                onClick={() => setBaseMap(m.id)}
+                onClick={() => setMode(m.id)}
                 title={m.hint}
-                className={pill(baseMap === m.id)}
+                className={pill(mode === m.id)}
               >
                 {m.label}
               </button>
@@ -139,54 +127,35 @@ const GlobeView: React.FC = () => {
           </div>
         </div>
 
-        {/* Paint layers */}
+        {/* Per-mode controls — only what the current view actually needs */}
         <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
-          <button
-            onClick={() => setPanelOpen((v) => !v)}
-            className={`w-9 h-9 rounded-lg backdrop-blur-md border border-white/10 transition-colors pointer-events-auto ${
-              panelOpen
-                ? 'bg-emerald-400/20 text-emerald-200'
-                : 'bg-[#0b111c]/85 text-slate-300 hover:text-white'
-            }`}
-            title="Paint layers"
-          >
-            ⚙
-          </button>
-
-          {panelOpen && (
+          {mode === 'nasa' && (
             <div className="w-56 bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1.5 pointer-events-auto">
-              {toggle('Clouds (EUMETSAT)', showClouds, setShowClouds)}
-              {toggle('Precipitation / radar', showPrecip, setShowPrecip)}
-              {toggle('City labels & borders', showLabels, setShowLabels)}
-
-              {/* Date picker for the NASA layers. */}
               <div className="px-2.5 py-1.5">
-                <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
-                  <span>NASA date</span>
-                </div>
+                <div className="text-[11px] text-slate-400 mb-1">NASA date</div>
                 <input
                   type="date"
                   value={nasaDate}
                   max={isoDaysAgo(0)}
-                  onChange={(e) => {
-                    setNasaDate(e.target.value);
-                    if (!isNasaGround) setBaseMap('nasa_today');
-                  }}
+                  onChange={(e) => setNasaDate(e.target.value)}
                   className="w-full px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[11px] text-slate-200 font-mono"
                 />
-                {isNasaGround && (
-                  <div className="mt-1.5 text-[10px] leading-relaxed text-amber-300/80">
-                    Weather paint is hidden over NASA imagery — those passes and the live
-                    EUMETSAT frame are different days, and stacking them would mislead.
-                  </div>
-                )}
               </div>
-              <div className="h-px bg-white/10 my-1" />
-              {toggle('Sky & atmosphere', showSky, setShowSky)}
-              {toggle('Live day / night', lighting, setLighting)}
-              {toggle('Noon sun over Kurdistan', dayMode === 'noon', (v) =>
-                setDayMode(v ? 'noon' : 'live')
-              )}
+            </div>
+          )}
+
+          {mode === 'radar' && (
+            <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1 flex items-center gap-0.5 pointer-events-auto">
+              {TIME_STEPS.map((t) => (
+                <button
+                  key={t.hours}
+                  onClick={() => setHoursAgo(t.hours)}
+                  title={`EUMETSAT precipitation from ${t.label.toLowerCase()}`}
+                  className={pill(hoursAgo === t.hours)}
+                >
+                  {t.label}
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -213,19 +182,6 @@ const GlobeView: React.FC = () => {
             </span>
           </div>
 
-          {/* Time control: ask EUMETSAT for an older observation. EUMETSAT retains ~14 days. */}
-          <div className="flex items-center gap-0.5 mt-2 pt-2 border-t border-white/10">
-            {TIME_STEPS.map((t) => (
-              <button
-                key={t.hours}
-                onClick={() => setHoursAgo(t.hours)}
-                title={`Paint the EUMETSAT observation from ${t.label.toLowerCase()}`}
-                className={pill(hoursAgo === t.hours)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
         </div>
 
         <a
