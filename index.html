@@ -15,6 +15,14 @@
   </head>
   <body class="bg-[#0B0E14] text-slate-100 overflow-hidden select-none">
     <div id="root"></div>
+    <!--
+      CesiumJS resolves its Workers / Assets / Widgets against window.CESIUM_BASE_URL.
+      It must be set BEFORE the app bundle loads, and it is resolved against the document so
+      it works both at "/" in dev and under the GitHub Pages subpath in production.
+    -->
+    <script>
+      window.CESIUM_BASE_URL = new URL('cesium/', document.baseURI).href;
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

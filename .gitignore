@@ -11,3 +11,6 @@ coverage/
 
 # Local EUMETSAT inspection frames (not part of the app)
 eumetsat-sample/
+
+# CesiumJS static runtime (copied from node_modules by scripts/copy-cesium.mjs)
+public/cesium/

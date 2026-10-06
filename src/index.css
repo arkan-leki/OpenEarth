@@ -25,3 +25,46 @@
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 163, 184, 0.6);
 }
+
+/* ---------------------------------------------------------------------------
+   Cesium data-credit line.
+
+   The credits are KEPT, not hidden: the imagery and terrain here are other
+   people's datasets (NASA GIBS, EUMETSAT, Mapzen/AWS) and they have earned the
+   mention. They are only made quiet — small, low contrast, and moved off the
+   bottom-left corner that the app's own HUD occupies.
+
+   `!important` is deliberate. Cesium's widgets.css ships inside the lazily
+   loaded CesiumGlobe chunk, so it reaches the document AFTER this file and
+   would win every equal-specificity tie. These are third-party widget rules
+   that we are intentionally overriding, which is what `!important` is for.
+   --------------------------------------------------------------------------- */
+.cesium-viewer-bottom {
+  left: auto !important;
+  right: 8px !important;
+  bottom: 4px !important;
+  opacity: 0.5;
+  transition: opacity 0.2s ease;
+}
+
+.cesium-viewer-bottom:hover {
+  opacity: 1;
+}
+
+.cesium-widget-credits,
+.cesium-viewer .cesium-widget-credits {
+  color: #94a3b8 !important;
+  font-size: 9px !important;
+  background: transparent !important;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.95) !important;
+}
+
+.cesium-widget-credits a {
+  color: #94a3b8 !important;
+}
+
+/* No Cesium ion service is used anywhere in this app, so the ion mark is not
+   applicable and would be a misleading attribution. */
+.cesium-credit-logoContainer {
+  display: none !important;
+}

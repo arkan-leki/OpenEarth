@@ -4,6 +4,241 @@ import { ZoomEarthTopBar } from './components/ZoomEarthTopBar';
 import { ZoomEarthFloatingControls } from './components/ZoomEarthFloatingControls';
 import { KurdistanWeatherCard } from './components/KurdistanWeatherCard';
 import { WeatherSimulationView } from './components/WeatherSimulationView';
+import { GlobeStatus } from './components/CesiumGlobe';
+import { BASE_MAPS, BaseMapId, isoDaysAgo } from './services/cesiumBaseMaps';
+
+/**
+ * CesiumJS supplies ONLY the geospatial layer — globe, streamed terrain, imagery and camera —
+ * for the volumetric cloud renderer and ground this app already has.
+ *
+ * It is a SEPARATE VIEW, chosen when the page loads, not a live toggle. Verified the hard way:
+ * mounting Cesium while the three.js canvas is being torn down loses the WebGL context and
+ * crashes the React tree, because two WebGL engines cannot safely share one page. Switching
+ * therefore navigates and reloads.
+ *
+ * It is ~1.1 MB gzipped, so it is code-split and fetched only when that view is requested.
+ */
+const CesiumGlobe = React.lazy(() =>
+  import('./components/CesiumGlobe').then((m) => ({ default: m.CesiumGlobe }))
+);
+
+/** The Cesium Earth IS the app now. The old volumetric view stays reachable at ?view=legacy. */
+const LEGACY_VIEW =
+  new URLSearchParams(window.location.search).get('view') === 'legacy';
+
+/**
+ * The Cesium Earth: HD satellite ground, with real observations painted over it.
+ *
+ * Its own page, deliberately. Two WebGL engines cannot safely share one document — mounting
+ * Cesium while the three.js canvas was being torn down lost the WebGL context and crashed the
+ * React tree — so the two views are reached by navigation, never by a live swap.
+ */
+const GlobeView: React.FC = () => {
+  const [baseMap, setBaseMap] = useState<BaseMapId>('esri');
+  const [showClouds, setShowClouds] = useState(true);
+  const [showPrecip, setShowPrecip] = useState(true);
+  const [showLabels, setShowLabels] = useState(true);
+  const [showSky, setShowSky] = useState(true);
+  // On by default: the live day/night shift is the point of the live view.
+  const [lighting, setLighting] = useState(true);
+  const [dayMode, setDayMode] = useState<'live' | 'noon'>('live');
+  const [status, setStatus] = useState<GlobeStatus | null>(null);
+  // Closed by default: an open panel covers a large part of the globe and swallows the
+  // drags and wheel events meant for the camera.
+  const [panelOpen, setPanelOpen] = useState(false);
+  /** 0 = live, otherwise how many hours back to ask EUMETSAT for. */
+  const [hoursAgo, setHoursAgo] = useState(0);
+  /** Date for the NASA layers, seeded to yesterday (the newest pass usually published). */
+  const [nasaDate, setNasaDate] = useState(() => isoDaysAgo(1));
+  const isNasaGround = baseMap === 'nasa_today' || baseMap === 'nasa_yesterday';
+
+  const TIME_STEPS = [
+    { hours: 0, label: 'LIVE' },
+    { hours: 6, label: '6H AGO' },
+    { hours: 12, label: '12H AGO' },
+    { hours: 24, label: '24H AGO' }
+  ];
+
+  const frameLabel = status?.frameTime
+    ? `${status.frameTime.toISOString().slice(11, 16)}Z`
+    : '—';
+
+  const pill = (active: boolean) =>
+    `px-2.5 py-1.5 rounded-lg text-[10px] font-semibold tracking-wider transition-colors ${
+      active
+        ? 'bg-emerald-400/20 text-emerald-200'
+        : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+    }`;
+
+  const toggle = (label: string, value: boolean, set: (v: boolean) => void) => (
+    <button
+      key={label}
+      onClick={() => set(!value)}
+      className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
+        value ? 'bg-emerald-400/15 text-emerald-200' : 'text-slate-400 hover:bg-white/5'
+      }`}
+    >
+      <span>{label}</span>
+      <span
+        className={`w-7 h-3.5 rounded-full relative ${value ? 'bg-emerald-400/70' : 'bg-slate-600/60'}`}
+      >
+        <span
+          className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${
+            value ? 'left-3.5' : 'left-0.5'
+          }`}
+        />
+      </span>
+    </button>
+  );
+
+  return (
+    <div className="relative w-screen h-screen overflow-hidden bg-[#07090E] select-none font-sans">
+      <React.Suspense
+        fallback={
+          <div className="w-full h-full flex flex-col items-center justify-center gap-3 bg-[#07090E]">
+            <div className="w-6 h-6 rounded-full border-2 border-emerald-400/30 border-t-emerald-400 animate-spin" />
+            <div className="text-slate-500 text-[11px] font-mono tracking-widest">LOADING GLOBE</div>
+          </div>
+        }
+      >
+        <CesiumGlobe
+          baseMap={baseMap}
+          showClouds={showClouds}
+          showPrecip={showPrecip}
+          showLabels={showLabels}
+          nasaDate={nasaDate}
+          showSky={showSky}
+          lighting={lighting}
+          dayMode={dayMode}
+          frameHoursAgo={hoursAgo}
+          onStatus={setStatus}
+        />
+      </React.Suspense>
+
+      <div className="absolute inset-0 z-20 pointer-events-none">
+        {/* Ground imagery */}
+        <div className="absolute top-4 left-4 flex items-start gap-2">
+          <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl px-3 py-2 flex items-center gap-2.5 pointer-events-auto">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="text-[12px] font-semibold tracking-[0.18em] text-slate-100">
+              OPENEARTH
+            </span>
+          </div>
+
+          <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1 flex items-center gap-0.5 pointer-events-auto">
+            {BASE_MAPS.map((m) => (
+              <button
+                key={m.id}
+                onClick={() => setBaseMap(m.id)}
+                title={m.hint}
+                className={pill(baseMap === m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Paint layers */}
+        <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
+          <button
+            onClick={() => setPanelOpen((v) => !v)}
+            className={`w-9 h-9 rounded-lg backdrop-blur-md border border-white/10 transition-colors pointer-events-auto ${
+              panelOpen
+                ? 'bg-emerald-400/20 text-emerald-200'
+                : 'bg-[#0b111c]/85 text-slate-300 hover:text-white'
+            }`}
+            title="Paint layers"
+          >
+            ⚙
+          </button>
+
+          {panelOpen && (
+            <div className="w-56 bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1.5 pointer-events-auto">
+              {toggle('Clouds (EUMETSAT)', showClouds, setShowClouds)}
+              {toggle('Precipitation / radar', showPrecip, setShowPrecip)}
+              {toggle('City labels & borders', showLabels, setShowLabels)}
+
+              {/* Date picker for the NASA layers. */}
+              <div className="px-2.5 py-1.5">
+                <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
+                  <span>NASA date</span>
+                </div>
+                <input
+                  type="date"
+                  value={nasaDate}
+                  max={isoDaysAgo(0)}
+                  onChange={(e) => {
+                    setNasaDate(e.target.value);
+                    if (!isNasaGround) setBaseMap('nasa_today');
+                  }}
+                  className="w-full px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[11px] text-slate-200 font-mono"
+                />
+                {isNasaGround && (
+                  <div className="mt-1.5 text-[10px] leading-relaxed text-amber-300/80">
+                    Weather paint is hidden over NASA imagery — those passes and the live
+                    EUMETSAT frame are different days, and stacking them would mislead.
+                  </div>
+                )}
+              </div>
+              <div className="h-px bg-white/10 my-1" />
+              {toggle('Sky & atmosphere', showSky, setShowSky)}
+              {toggle('Live day / night', lighting, setLighting)}
+              {toggle('Noon sun over Kurdistan', dayMode === 'noon', (v) =>
+                setDayMode(v ? 'noon' : 'live')
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* What is painted */}
+        <div className="absolute bottom-4 left-4 bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl px-3 py-2 pointer-events-auto">
+          <div className="flex items-center gap-3 text-[10px] font-mono">
+            <span className="flex items-center gap-1.5">
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  status?.ready ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              />
+              <span className="text-slate-300">{status?.ready ? 'PAINTED' : 'LOADING'}</span>
+            </span>
+            <span className="text-slate-500">
+              CLOUD <span className="text-slate-200">{status?.cloudCoveragePct ?? '—'}%</span>
+            </span>
+            <span className="text-slate-500">
+              FRAME <span className="text-slate-200">{frameLabel}</span>
+            </span>
+            <span className="text-slate-500" title="Terrain tiles streamed on demand">
+              TERRAIN TILES <span className="text-slate-200">{status?.terrainTiles ?? 0}</span>
+            </span>
+          </div>
+
+          {/* Time control: ask EUMETSAT for an older observation. EUMETSAT retains ~14 days. */}
+          <div className="flex items-center gap-0.5 mt-2 pt-2 border-t border-white/10">
+            {TIME_STEPS.map((t) => (
+              <button
+                key={t.hours}
+                onClick={() => setHoursAgo(t.hours)}
+                title={`Paint the EUMETSAT observation from ${t.label.toLowerCase()}`}
+                className={pill(hoursAgo === t.hours)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <a
+          href="?view=legacy"
+          className="absolute bottom-4 right-4 z-30 px-3 py-2 rounded-xl bg-[#0b111c]/85 backdrop-blur-md border border-white/10 text-slate-300 text-[11px] font-mono tracking-wider hover:text-white transition-colors pointer-events-auto"
+          title="The old volumetric 3D view"
+        >
+          VOLUMETRIC VIEW →
+        </a>
+      </div>
+    </div>
+  );
+};
 import { loadSatelliteTilesForChunks } from './services/chunkSatelliteService';
 import { SatelliteMetViewerModal } from './components/SatelliteMetViewerModal';
 import { KurdistanSolarController } from './components/KurdistanSolarController';
@@ -57,6 +292,10 @@ const DEFAULT_SHADER_PARAMS: ShaderParameters = {
 export default function App() {
   const [weatherPayload, setWeatherPayload] = useState<KurdistanWeatherPayload>(FALLBACK_WEATHER_DATA);
   const [, setIsWeatherLoading] = useState<boolean>(false);
+
+  // The Cesium globe lives on its own page (see GLOBE_VIEW), so this component never has to
+  // host two WebGL engines at once.
+  if (!LEGACY_VIEW) return <GlobeView />;
 
   // Selected landmark in Kurdistan (default: Erbil Citadel)
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('erbil');
@@ -595,6 +834,10 @@ export default function App() {
         onToggleHideAll={() => {
           setHideAll(prev => !prev);
           setIsSatelliteModalOpen(false);
+        }}
+        cesiumGlobe={false}
+        onToggleCesiumGlobe={() => {
+          window.location.href = '?view=globe';
         }}
         isDaytimeMode={isDaytimeMode}
         onToggleDaytimeMode={() => setIsDaytimeMode(prev => !prev)}

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Cloud, CloudRain, MapPin, RotateCw, Compass, Sliders, X, Layers, Sun, Eye, EyeOff, Trees } from 'lucide-react';
+import { Cloud, CloudRain, MapPin, RotateCw, Compass, Sliders, X, Layers, Sun, Eye, EyeOff, Trees, Globe } from 'lucide-react';
 import { ShaderParameters } from '../types';
 
 interface ZoomEarthFloatingControlsProps {
@@ -23,6 +23,9 @@ interface ZoomEarthFloatingControlsProps {
   onToggleDaytimeMode?: () => void;
   hideAll?: boolean;
   onToggleHideAll?: () => void;
+  /** CesiumJS globe (streamed terrain/imagery) vs the original three.js scene. */
+  cesiumGlobe?: boolean;
+  onToggleCesiumGlobe?: () => void;
 }
 
 export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps> = ({
@@ -45,7 +48,9 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
   isDaytimeMode = false,
   onToggleDaytimeMode,
   hideAll = false,
-  onToggleHideAll
+  onToggleHideAll,
+  cesiumGlobe = false,
+  onToggleCesiumGlobe
 }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
@@ -195,6 +200,26 @@ export const ZoomEarthFloatingControls: React.FC<ZoomEarthFloatingControlsProps>
             title="Toggle 360° Ground-Level Same-Spot Panorama View"
           >
             360°
+          </button>
+        )}
+
+        {/* CesiumJS globe: streamed terrain + imagery instead of the hand-rolled three.js scene */}
+        {onToggleCesiumGlobe && (
+          <button
+            id="btn-dock-toggle-cesium"
+            onClick={onToggleCesiumGlobe}
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center backdrop-blur-xl border transition-all shadow-xl cursor-pointer ${
+              cesiumGlobe
+                ? 'bg-cyan-500/30 border-cyan-400 text-cyan-100 ring-2 ring-cyan-400/40'
+                : 'bg-slate-950/80 border-slate-700/60 text-slate-400 hover:text-white'
+            }`}
+            title={
+              cesiumGlobe
+                ? 'CesiumJS globe ON — streamed terrain, imagery and LOD. Click for the three.js scene.'
+                : 'CesiumJS globe OFF — click to switch to the streamed CesiumJS globe'
+            }
+          >
+            <Globe className="w-5 h-5" />
           </button>
         )}
 

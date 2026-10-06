@@ -491,7 +491,9 @@ export const KURDISTAN_LANDMARKS: Landmark[] = [
   makeLandmark('damavand', 'Mount Damavand (دەماوەند)', 'West Iran • Highest Peak in the Middle East • 5,610 m', 52.1100, 35.9550, 5610, 'mountain', 'west_iran'),
   makeLandmark('van', 'Lake Van (دەریاچەی وان)', 'East Turkey • Largest Lake in Turkey • 1,640 m', 43.0000, 38.6000, 1640, 'water', 'east_turkey'),
   makeLandmark('cukurca', 'Hakkari & Cilo-Sat (Colemêrg)', 'East Turkey • Deepest Alpine Gorges • 1,700 m', 43.7400, 37.5750, 1700, 'mountain', 'east_turkey'),
-  makeLandmark('cizre', 'Cizre & Tigris Border (Cizîr)', 'East Turkey • Tigris Crossing into Syria • 380 m', 42.1900, 37.3300, 380, 'city', 'east_turkey'),
+  // NOTE: 'cizre' is already defined in the East Turkey block above. It used to be listed a
+  // second time here with the same coordinates, which produced duplicate React keys and made
+  // Cesium throw "An entity with id cizre already exists in this collection".
   makeLandmark('raqqa', 'Raqqa (ڕەققە)', 'East Syria • Euphrates Valley • 250 m', 39.0100, 35.9500, 250, 'city', 'east_syria'),
   makeLandmark('deirezzor', 'Deir ez-Zor (دێرەزوور)', 'East Syria • Euphrates Oasis • 210 m', 40.1400, 35.3330, 210, 'city', 'east_syria')
 ];

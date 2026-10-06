@@ -53,28 +53,113 @@ export interface EumetsatCloudResult {
   frameTime: Date;
 }
 
+/** A plain longitude/latitude rectangle. */
+export interface LonLatBbox {
+  minLon: number;
+  minLat: number;
+  maxLon: number;
+  maxLat: number;
+}
+
+/** The app's original Kurdistan domain — the default extent for these products. */
+export const KURDISTAN_BBOX: LonLatBbox = {
+  minLon: MIN_LON,
+  minLat: MIN_LAT,
+  maxLon: MAX_LON,
+  maxLat: MAX_LAT
+};
+
+/**
+ * The full Meteosat IODC disc footprint.
+ *
+ * Meteosat sits at 45.5°E, and a geostationary satellite sees up to 81.3° from its
+ * sub-satellite point. That 81.3° applies to LATITUDE as measured from the equator, not as an
+ * offset from the satellite's longitude — so the disc spans ±81.3° latitude, while longitude
+ * is the satellite's 45.5°E ± 81.3°. Offsetting latitude by the longitude would produce
+ * maxLat = 126.8°, which is not a real latitude and silently shifts every cloud.
+ *
+ * This is the largest extent that carries real data; outside it there is nothing to fetch,
+ * which is why the global layers stop here rather than requesting transparent tiles over the
+ * Americas. The bounding rectangle's corners fall outside the disc and carry no data.
+ */
+/**
+ * The Meteosat 0° disc — a DIFFERENT view from IODC, not a duplicate of it.
+ *
+ * Meteosat at 0° sees longitudes -81.3 to 81.3; Meteosat IODC at 45.5°E sees -35.8 to 126.8.
+ * Added together they span -81.3 to 126.8, covering 58% of the planet's longitudes instead of
+ * 45%. EUMETView's own capabilities list only Meteosat (fes / iodc / rss / mtg_fd) — there is no
+ * GOES or Himawari, so the Americas and the Pacific cannot be reached from this service at all.
+ */
+export const FES_DISC_BBOX: LonLatBbox = {
+  minLon: -81.3,
+  minLat: -81.3,
+  maxLon: 81.3,
+  maxLat: 81.3
+};
+
+/**
+ * Only the part of the 0° disc that IODC does NOT already cover.
+ *
+ * The two discs share 117° of longitude, and painting both in full doubled the cloud's opacity
+ * across that whole band — a visible overlap seam down the middle of the map. Requesting just
+ * the western slice (-81.3 to -35.8) makes the pair tile the planet edge to edge instead of
+ * stacking on top of each other.
+ */
+export const FES_WEST_BBOX: LonLatBbox = {
+  minLon: -81.3,
+  minLat: -81.3,
+  maxLon: -35.8,
+  maxLat: 81.3
+};
+
+export const IODC_DISC_BBOX: LonLatBbox = {
+  minLon: 45.5 - 81.3,
+  minLat: -81.3,
+  maxLon: 45.5 + 81.3,
+  maxLat: 81.3
+};
+
 function snapToFrame(ms: number): number {
   return Math.floor(ms / FRAME_INTERVAL_MS) * FRAME_INTERVAL_MS;
 }
 
-/** Candidate frame times, newest first. */
-function candidateFrameTimes(count = 5): Date[] {
+/**
+ * Candidate frame times, newest first.
+ *
+ * `fromMs` lets the caller ask about a moment in the past, which is what the time control uses
+ * to reach back 6 or 12 hours.
+ *
+ * The publish-latency offset only makes sense when asking about NOW — the newest frame is
+ * routinely not downloadable yet. For a historical request it is set to zero, so "6 hours ago"
+ * means the frame nearest 6 hours ago rather than a further 30 minutes behind it.
+ */
+function candidateFrameTimes(
+  count = 5,
+  fromMs = Date.now(),
+  latencyMinutes = PUBLISH_LATENCY_MINUTES
+): Date[] {
   const times: Date[] = [];
   for (let i = 0; i < count; i++) {
-    const offsetMs = (PUBLISH_LATENCY_MINUTES + i * 15) * 60 * 1000;
-    times.push(new Date(snapToFrame(Date.now() - offsetMs)));
+    const offsetMs = (latencyMinutes + i * 15) * 60 * 1000;
+    times.push(new Date(snapToFrame(fromMs - offsetMs)));
   }
   return times;
 }
 
-function buildWmsUrl(layer: string, frameTime: Date, width = 1024, height = 1024): string {
+function buildWmsUrl(
+  layer: string,
+  frameTime: Date,
+  width = 1024,
+  height = 1024,
+  bbox: LonLatBbox = KURDISTAN_BBOX
+): string {
   // WMS 1.3.0 + EPSG:4326 → axis order is lat,lon: minLat,minLon,maxLat,maxLon.
   const params = new URLSearchParams({
     service: 'WMS',
     version: '1.3.0',
     request: 'GetMap',
     layers: layer,
-    bbox: `${MIN_LAT},${MIN_LON},${MAX_LAT},${MAX_LON}`,
+    bbox: `${bbox.minLat},${bbox.minLon},${bbox.maxLat},${bbox.maxLon}`,
     width: String(width),
     height: String(height),
     crs: 'EPSG:4326',
@@ -112,8 +197,11 @@ function toCanvas(img: HTMLImageElement, willRead: boolean, blurPx = 0): HTMLCan
  * Decodes the Cloud Mask into a 0..255 cloud-density image.
  * Cloud is the only white class, so min(R,G,B) is the density directly.
  */
-function decodeCloudMask(img: HTMLImageElement): { canvas: HTMLCanvasElement; coveragePct: number } {
-  const canvas = toCanvas(img, true, MASK_BLUR_PX);
+function decodeCloudMask(
+  img: HTMLImageElement,
+  blurPx = MASK_BLUR_PX
+): { canvas: HTMLCanvasElement; coveragePct: number } {
+  const canvas = toCanvas(img, true, blurPx);
   const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const data = imageData.data;
@@ -131,6 +219,30 @@ function decodeCloudMask(img: HTMLImageElement): { canvas: HTMLCanvasElement; co
   ctx.putImageData(imageData, 0, 0);
 
   return { canvas, coveragePct: Math.round((cloudPixels / total) * 1000) / 10 };
+}
+
+/**
+ * Resolves which frame time is actually published, using a deliberately tiny request.
+ *
+ * GeoServer intermittently answers with a 500 while warming, and the newest frame is not
+ * immediately downloadable, so some probing is unavoidable. Probing with a 64² image costs
+ * almost nothing, whereas the alternative — calling the full cloud-canvas fetch purely to
+ * learn a timestamp — downloads a megapixel mask that the 3D globe then throws away.
+ */
+export async function resolveEumetsatFrameTime(hoursAgo = 0): Promise<Date | null> {
+  const fromMs = Date.now() - hoursAgo * 3_600_000;
+  const latency = hoursAgo > 0 ? 0 : PUBLISH_LATENCY_MINUTES;
+
+  for (const frameTime of candidateFrameTimes(6, fromMs, latency)) {
+    try {
+      const img = await loadImage(buildWmsUrl(CLOUD_MASK_LAYER, frameTime, 64, 64));
+      if (img.width && img.height) return frameTime;
+    } catch {
+      // Not published yet, or outside the retention window — try the next older frame.
+    }
+  }
+  console.warn('[EUMETSAT] no published frame found in the recent window');
+  return null;
 }
 
 /**
@@ -197,4 +309,79 @@ export async function fetchEumetsatLayerFrame(
   }
   console.warn(`[EUMETSAT] no ${layer} frame available in the recent window`);
   return null;
+}
+
+/**
+ * Cloud-mask density and cover over an arbitrary extent, for a frame time already known to
+ * load.
+ *
+ * The cloud field follows the camera, so the mask is fetched for whatever the camera is
+ * currently looking at. Requesting the same pixel count over a smaller extent is what makes
+ * detail scale with zoom: the WMS renders more pixels per kilometre the further you zoom in,
+ * up to the ~3 km limit of the instrument itself.
+ *
+ * `coveragePct` describes the SAME extent that was just fetched, so the figure on screen
+ * always refers to the area in view rather than to some fixed region elsewhere.
+ *
+ * `blurPx` defaults to ZERO here, unlike the legacy canvas decode. The mask is a hard per-pixel
+ * classification, and blurring it rounds off the class boundaries — which destroys exactly the
+ * sharp edges and clear holes that make the product readable. The blur exists only for the old
+ * volumetric pipeline, which needed soft edges to ray-march against.
+ *
+ * `layerId` allows the same decode to be run against a second satellite's mask (`msg_fes:clm`),
+ * so two discs can be painted from one code path.
+ *
+ * Returns null on failure — the caller keeps its previous field rather than repositioning
+ * clouds against the wrong extent.
+ */
+export async function fetchEumetsatCloudMaskExtent(
+  frameTime: Date,
+  bbox: LonLatBbox = IODC_DISC_BBOX,
+  width = 1024,
+  height = 1024,
+  blurPx = 0,
+  layerId = CLOUD_MASK_LAYER
+): Promise<{ canvas: HTMLCanvasElement; coveragePct: number } | null> {
+  /*
+   * Retried once, because this service fails INTERMITTENTLY rather than by request size:
+   * measured on one frame time, 512/768/1024 answered 200, 1280 answered 502, and 1536/2048
+   * answered 200 again. A single silent failure here loses the entire cloud layer, so one
+   * retry converts a common transient into a rarely-visible one.
+   */
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const img = await loadImage(buildWmsUrl(layerId, frameTime, width, height, bbox));
+      if (!img.width || !img.height) throw new Error('empty cloud mask');
+      return decodeCloudMask(img, blurPx);
+    } catch (err) {
+      if (attempt === 1) {
+        console.warn('[EUMETSAT] cloud mask unavailable after retry:', err);
+        return null;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * The precipitation estimate as published (RGBA, transparent where dry), for an arbitrary
+ * extent and frame time.
+ *
+ * Returned raw rather than decoded: unlike the cloud mask this product is already a colour
+ * ramp, so its channels ARE the information and must not be reduced to a grey density.
+ */
+export async function fetchEumetsatPrecipExtent(
+  frameTime: Date,
+  bbox: LonLatBbox = IODC_DISC_BBOX,
+  width = 768,
+  height = 768
+): Promise<HTMLCanvasElement | null> {
+  try {
+    const img = await loadImage(buildWmsUrl(PRECIP_LAYER, frameTime, width, height, bbox));
+    if (!img.width || !img.height) return null;
+    return toCanvas(img, true);
+  } catch (err) {
+    console.warn('[EUMETSAT] precipitation for the requested extent unavailable:', err);
+    return null;
+  }
 }
