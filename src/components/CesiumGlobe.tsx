@@ -174,47 +174,6 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       controller.enableCollisionDetection = true;
 
       const scene = viewer.scene;
-      /*
-       * POST-PROCESSING — CesiumJS ships these; we simply never switched them on.
-       *
-       *   fxaa              antialiasing, so terrain and coastline edges stop stair-stepping
-       *   bloom             glow, which is what makes bright cloud and radar read as luminous
-       *                     rather than pasted on. This is the affordable version of what the
-       *                     Unreal post-processing stack would give, in ten lines.
-       *   ambientOcclusion  contact shading, so relief and building-scale detail gain depth
-       *
-       * Bloom is tuned to pick up only genuinely bright pixels — threshold high, gain low —
-       * so it catches cloud and radar without washing out the satellite imagery underneath.
-       */
-      const stages = scene.postProcessStages;
-      stages.fxaa.enabled = true;
-
-      stages.bloom.enabled = true;
-      stages.bloom.uniforms.glowOnly = false;
-      stages.bloom.uniforms.contrast = 148;
-      stages.bloom.uniforms.brightness = -0.35;
-      stages.bloom.uniforms.delta = 1.0;
-      stages.bloom.uniforms.sigma = 3.4;
-      stages.bloom.uniforms.stepSize = 1.2;
-
-      stages.ambientOcclusion.enabled = true;
-      stages.ambientOcclusion.uniforms.intensity = 2.4;
-      stages.ambientOcclusion.uniforms.bias = 0.1;
-      stages.ambientOcclusion.uniforms.lengthCap = 0.3;
-      stages.ambientOcclusion.uniforms.stepSize = 1.2;
-
-      /*
-       * TERRAIN SHADOWS — real relief from the sun instead of vertical exaggeration.
-       *
-       * RECEIVE_ONLY on the globe: the terrain receives shadow from geometry that casts it,
-       * which is what gives mountains their shape at low sun angles. This is the honest answer
-       * to terrain reading as flat — lighting does the work, not a height multiplier.
-       */
-      scene.shadowMap.enabled = true;
-      scene.shadowMap.softShadows = true;
-      scene.shadowMap.darkness = 0.35;
-      scene.globe.shadows = Cesium.ShadowMode.RECEIVE_ONLY;
-
       scene.globe.baseColor = Cesium.Color.fromCssColorString('#0d1524');
       // Off on purpose: weather sheets sit at 2-3 km and would otherwise be buried by mountains.
       scene.globe.depthTestAgainstTerrain = false;
