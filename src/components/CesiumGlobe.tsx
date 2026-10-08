@@ -414,13 +414,35 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
      */
     const REGION = { lon0: 33, lat0: 24, lon1: 56, lat1: 43 };
 
-    const addPlaces = (features: any[], labelLength: number) => {
+    /**
+     * How far out a place stays labelled, by population.
+     *
+     * Every label at every zoom was both unreadable and wasteful: 1,500 names at globe scale is
+     * a wall of text, and the smaller ones are meaningless from orbit anyway. Real maps reveal
+     * places progressively, and `distanceDisplayCondition` does exactly that — the culling
+     * happens in the renderer, so nothing is computed per frame and no entity churns in or out.
+     *
+     * Big cities hold on to a global view; towns only appear once you are close enough for them
+     * to mean something.
+     */
+    const visibilityRange = (population: number): number => {
+      if (population >= 1_000_000) return 12_000_000;
+      if (population >= 300_000) return 5_000_000;
+      if (population >= 100_000) return 2_000_000;
+      if (population >= 30_000) return 800_000;
+      return 300_000;
+    };
+
+    const addPlaces = (features: any[]) => {
       for (const feature of features) {
         const props = feature.properties ?? {};
         const coords = feature.geometry?.coordinates;
         const lon = coords?.[0];
         const lat = coords?.[1];
         if (typeof lon !== 'number' || typeof lat !== 'number') continue;
+
+        // The regional file carries `pop`, the global one `pop_max`; either may be absent.
+        const population = Number(props.pop ?? props.pop_max ?? 0) || 0;
 
         viewer.entities.add({
           id: `__place_${props.name}_${lon}_${lat}`,
@@ -436,7 +458,10 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
             // The line that makes the difference: without it the label depth-tests against the
             // weather in front of it and disappears.
             disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, labelLength)
+            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(
+              0,
+              visibilityRange(population)
+            )
           }
         });
       }
@@ -454,7 +479,7 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
             return typeof c?.[0] === 'number' && filter(c[0], c[1]);
           });
         }
-        addPlaces(features, 9_000_000);
+        addPlaces(features);
       } catch (err) {
         console.warn(`[Cesium] ${file} unavailable:`, err);
       }
