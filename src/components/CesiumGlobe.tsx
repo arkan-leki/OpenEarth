@@ -349,6 +349,100 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     };
   }, []);
 
+  /*
+   * BORDERS AND PLACE NAMES — drawn ABOVE the weather, not under it.
+   *
+   * Both used to be imagery layers, which drape ON the globe surface. Everything we paint for
+   * weather floats higher, and the neighbouring satellites' sheets are fully opaque, so borders
+   * and names were invisible wherever weather covered them — which is most of the map. Neither
+   * was missing; both were underneath.
+   *
+   * So they are geometry now, placed above the highest weather sheet:
+   *   country borders   polygons at 24,000 m (radar tops out at 20,000)
+   *   place names       labels with disableDepthTestDistance, which renders them over everything
+   *
+   * Data is Natural Earth — public domain, no key, no ion token. 177 countries and 1251 named
+   * places. URLs are built against document.baseURI because the app deploys under /OpenEarth/
+   * on GitHub Pages, where a bare '/data/...' would 404.
+   */
+  useEffect(() => {
+    const viewer = viewerRef.current;
+    if (!viewer || !ready || viewer.isDestroyed()) return;
+
+    let disposed = false;
+    let borders: Cesium.GeoJsonDataSource | null = null;
+
+    (async () => {
+      try {
+        const url = new URL('data/ne_110m_admin_0_countries.geojson', document.baseURI).href;
+        const ds = await Cesium.GeoJsonDataSource.load(url, {
+          stroke: Cesium.Color.fromCssColorString('#7dd3fc'),
+          fill: Cesium.Color.fromCssColorString('#7dd3fc').withAlpha(0.04),
+          strokeWidth: 1.6,
+          clampToGround: false
+        });
+        // Never added, so nothing owns it; DataSource has no destroy() — it is released with
+        // the collection. Just drop the reference.
+        if (disposed || viewer.isDestroyed()) return;
+        // Lift every polygon clear of the weather so no sheet can occlude it.
+        for (const entity of ds.entities.values) {
+          if (!entity.polygon) continue;
+          entity.polygon.height = new Cesium.ConstantProperty(24000);
+          entity.polygon.outline = new Cesium.ConstantProperty(true);
+          entity.polygon.outlineColor = new Cesium.ConstantProperty(
+            Cesium.Color.fromCssColorString('#7dd3fc')
+          );
+        }
+        borders = ds;
+        viewer.dataSources.add(ds);
+      } catch (err) {
+        console.warn('[Cesium] borders unavailable:', err);
+      }
+    })();
+
+    (async () => {
+      try {
+        const url = new URL('data/ne_50m_populated_places_simple.geojson', document.baseURI).href;
+        const geo = await (await fetch(url)).json();
+        if (disposed || viewer.isDestroyed()) return;
+
+        for (const feature of geo.features ?? []) {
+          const props = feature.properties ?? {};
+          const coords = feature.geometry?.coordinates;
+          const lon = coords?.[0];
+          const lat = coords?.[1];
+          if (typeof lon !== 'number' || typeof lat !== 'number') continue;
+
+          viewer.entities.add({
+            id: `__place_${props.name}_${lon}_${lat}`,
+            position: Cesium.Cartesian3.fromDegrees(lon, lat, 26000),
+            label: {
+              text: String(props.name ?? ''),
+              font: '11px sans-serif',
+              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+              fillColor: Cesium.Color.WHITE,
+              outlineColor: Cesium.Color.fromCssColorString('#0b111c'),
+              outlineWidth: 2,
+              pixelOffset: new Cesium.Cartesian2(0, -8),
+              // The line that makes the difference: without it the label depth-tests against
+              // the weather and disappears behind it.
+              disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 9_000_000)
+            }
+          });
+        }
+      } catch (err) {
+        console.warn('[Cesium] place names unavailable:', err);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+      if (borders && viewer && !viewer.isDestroyed()) viewer.dataSources.remove(borders, true);
+      borders = null;
+    };
+  }, [ready]);
+
   // ---- The paint stack ----------------------------------------------------------------------
   //
   // Built as ONE ordered stack. Adding the base clears the layer collection, so separate
