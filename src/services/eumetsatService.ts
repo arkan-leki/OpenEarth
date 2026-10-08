@@ -390,17 +390,28 @@ export async function fetchEumetsatCloudMaskExtent(
 export async function fetchEumetsatPrecipExtent(
   frameTime: Date,
   bbox: LonLatBbox = IODC_DISC_BBOX,
-  width = 768,
-  height = 768
+  width = 1024,
+  height = 1024
 ): Promise<HTMLCanvasElement | null> {
-  try {
-    const img = await loadImage(buildWmsUrl(PRECIP_LAYER, frameTime, width, height, bbox));
-    if (!img.width || !img.height) return null;
-    return toCanvas(img, true);
-  } catch (err) {
-    console.warn('[EUMETSAT] precipitation for the requested extent unavailable:', err);
-    return null;
+  /*
+   * Retried once, exactly like the cloud mask. This service fails intermittently regardless of
+   * request size, and a single silent failure here loses the ENTIRE radar layer — which is
+   * precisely the symptom being chased. The cloud mask got a retry and this did not, so a
+   * transient hiccup on one call and not the other left cloud visible and rain missing.
+   */
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const img = await loadImage(buildWmsUrl(PRECIP_LAYER, frameTime, width, height, bbox));
+      if (!img.width || !img.height) throw new Error('empty precipitation frame');
+      return toCanvas(img, true);
+    } catch (err) {
+      if (attempt === 1) {
+        console.warn('[EUMETSAT] precipitation unavailable after retry:', err);
+        return null;
+      }
+    }
   }
+  return null;
 }
 
 /**
@@ -461,4 +472,71 @@ export async function fetchPolarCanvas(
     console.warn('[EUMETSAT] polar frame unavailable for decoding:', err);
     return null;
   }
+}
+
+/**
+ * Fetch a region as a GRID of smaller requests and stitch them into one canvas.
+ *
+ * The whole disc used to arrive as a single 1024px image across 163° — about 17.6 km per pixel,
+ * which is why every EUMETSAT layer looked chunky. Nothing about the product is that coarse; the
+ * REQUEST was. Splitting into cols x rows at the same tile size multiplies the pixel count:
+ *
+ *     1 x 1  ->  17.6 km/px      2 x 2  ->  8.8 km/px
+ *     3 x 3  ->   5.9 km/px      4 x 4  ->  4.4 km/px
+ *
+ * Measured before building this: all four quadrants of the disc returned data (58.7-58.8% each,
+ * against 59.0% for the single whole-disc image), so the split loses no coverage.
+ *
+ * Sub-regions are requested in parallel and drawn into one canvas, so downstream code still sees
+ * a single image for a single extent and nothing about the sheet builders changes.
+ *
+ * A sub-request that fails leaves its quadrant blank rather than abandoning the whole thing —
+ * the service fails intermittently and a partial sheet beats no sheet.
+ */
+export async function fetchStitchedCloudMask(
+  frameTime: Date,
+  bbox: LonLatBbox,
+  cols: number,
+  rows: number,
+  tilePx = 1024,
+  layerId = CLOUD_MASK_LAYER
+): Promise<{ canvas: HTMLCanvasElement; coveragePct: number } | null> {
+  const canvas = document.createElement('canvas');
+  canvas.width = cols * tilePx;
+  canvas.height = rows * tilePx;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return null;
+
+  const lonStep = (bbox.maxLon - bbox.minLon) / cols;
+  const latStep = (bbox.maxLat - bbox.minLat) / rows;
+
+  const jobs: Array<Promise<void>> = [];
+  for (let row = 0; row < rows; row++) {
+    for (let col = 0; col < cols; col++) {
+      // Row 0 is the NORTH edge, matching the canvas and Cesium's own row order.
+      const sub: LonLatBbox = {
+        minLon: bbox.minLon + col * lonStep,
+        maxLon: bbox.minLon + (col + 1) * lonStep,
+        minLat: bbox.maxLat - (row + 1) * latStep,
+        maxLat: bbox.maxLat - row * latStep
+      };
+      jobs.push(
+        fetchEumetsatCloudMaskExtent(frameTime, sub, tilePx, tilePx, 0, layerId).then((res) => {
+          if (res) ctx.drawImage(res.canvas, col * tilePx, row * tilePx);
+        })
+      );
+    }
+  }
+  await Promise.all(jobs);
+
+  // Coverage over the stitched result, so the figure matches what is actually on screen.
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  let cloud = 0;
+  let total = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    total++;
+    if (data[i] / 255 > CLOUD_COVER_DENSITY) cloud++;
+  }
+  return { canvas, coveragePct: Math.round((cloud / Math.max(total, 1)) * 1000) / 10 };
 }

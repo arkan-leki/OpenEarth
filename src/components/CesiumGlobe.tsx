@@ -2,16 +2,21 @@ import React, { useEffect, useRef, useState } from 'react';
 import * as Cesium from 'cesium';
 import 'cesium/Build/Cesium/Widgets/widgets.css';
 import { createLiveTerrainProvider, getTerrainStats } from '../services/cesiumTerrainService';
-import { BaseMapId, createBaseMapLayer, createLabelLayer } from '../services/cesiumBaseMaps';
+import { BaseMapId, createBaseMapLayer, createLabelLayer, isoDaysAgo } from '../services/cesiumBaseMaps';
 import {
   CloudMaskExtent,
-  createCloudOverlay,
-  createTiledEumetsatLayer,
-  createPolarBrightnessFadedOverlay
+  buildCloudSheet,
+  buildPolarSheet,
+  buildRadarSheet,
+  buildGeoSatSheet,
+  fetchGibsCanvas,
+  GEOSAT_REGIONS
 } from '../services/cesiumClouds';
 import {
   resolveEumetsatFrameTime,
   fetchEumetsatCloudMaskExtent,
+  fetchStitchedCloudMask,
+  fetchEumetsatPrecipExtent,
   fetchPolarCanvas,
   resolvePolarFrameTime,
   IODC_DISC_BBOX,
@@ -59,6 +64,15 @@ export interface GlobeStatus {
 
 export type GlobeMode = 'live' | 'nasa' | 'radar';
 
+/** Imperative controls the HUD needs, since the map has no built-in buttons enabled. */
+export interface GlobeApi {
+  zoomIn: () => void;
+  zoomOut: () => void;
+  resetView: () => void;
+  /** Fly to a point, with an optional height in metres. */
+  flyTo: (lon: number, lat: number, heightM?: number) => void;
+}
+
 interface CesiumGlobeProps {
   /**
    * Three views, one switch:
@@ -71,21 +85,29 @@ interface CesiumGlobeProps {
   nasaDate: string;
   /** How far back the radar view asks EUMETSAT for a frame: 0 = live. */
   frameHoursAgo: number;
+  /** Show the precipitation (radar) sheet in the radar view. */
+  showRadar: boolean;
   onStatus?: (status: GlobeStatus) => void;
+  onApi?: (api: GlobeApi) => void;
 }
 
 const EUMETVIEW_CREDIT = 'EUMETSAT Meteosat IODC';
+
 
 export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
   mode,
   nasaDate,
   frameHoursAgo,
-  onStatus
+  showRadar,
+  onStatus,
+  onApi
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<Cesium.Viewer | null>(null);
   const onStatusRef = useRef(onStatus);
   onStatusRef.current = onStatus;
+  const onApiRef = useRef(onApi);
+  onApiRef.current = onApi;
 
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -94,6 +116,9 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
   /** Resolved separately from the Meteosat frame: polar swaths need a much older timestamp. */
   const [polarTime, setPolarTime] = useState<Date | null>(null);
   const [polarCanvas, setPolarCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [precipCanvas, setPrecipCanvas] = useState<HTMLCanvasElement | null>(null);
+  /** The other operators' geostationary satellites — NOAA's GOES pair and JMA's Himawari. */
+  const [geoSat, setGeoSat] = useState<Record<string, HTMLCanvasElement | null>>({});
   /** One cloud overlay per satellite disc — two discs cover far more of the planet than one. */
   const [overlays, setOverlays] = useState<{
     clouds: Array<{ canvas: HTMLCanvasElement; extent: CloudMaskExtent }>;
@@ -150,7 +175,8 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
 
       const scene = viewer.scene;
       scene.globe.baseColor = Cesium.Color.fromCssColorString('#0d1524');
-      scene.globe.depthTestAgainstTerrain = true;
+      // Off on purpose: weather sheets sit at 2-3 km and would otherwise be buried by mountains.
+      scene.globe.depthTestAgainstTerrain = false;
       scene.skyAtmosphere.show = true;
       scene.globe.showGroundAtmosphere = true;
       scene.fog.enabled = true;
@@ -163,6 +189,24 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       });
 
       viewerRef.current = viewer;
+
+      // Zoom by halving/doubling the current height, so a click is a consistent step whether
+      // the camera is at 22,000 km or 5 km.
+      const step = () => Math.max(1, viewer!.camera.positionCartographic.height * 0.5);
+      onApiRef.current?.({
+        zoomIn: () => viewer?.camera.zoomIn(step()),
+        zoomOut: () => viewer?.camera.zoomOut(step()),
+        resetView: () =>
+          viewer?.camera.setView({
+            destination: Cesium.Cartesian3.fromDegrees(HOME_LON, HOME_LAT, HOME_HEIGHT_M)
+          }),
+        flyTo: (lon: number, lat: number, heightM = 150_000) => {
+          viewer?.camera.flyTo({
+            destination: Cesium.Cartesian3.fromDegrees(lon, lat, heightM)
+          });
+        }
+      });
+
       setError(null);
       setReady(true);
     } catch (err) {
@@ -202,11 +246,20 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
        * It is a fixed extent, not camera-driven, so it costs one fetch per time change rather
        * than one per camera move — the per-move version caused visible flashing and was removed.
        */
-      const [iodc, fes, kurdistan] = await Promise.all([
-        fetchEumetsatCloudMaskExtent(t, IODC_DISC_BBOX, 1024, 1024),
-        fetchEumetsatCloudMaskExtent(t, FES_WEST_BBOX, 1024, 1024, 0, 'msg_fes:clm'),
-        fetchEumetsatCloudMaskExtent(t, KURDISTAN_BBOX, 1536, 1536)
+      /*
+       * Several regional requests instead of one, stitched per region.
+       *
+       * 2x2 over the disc takes it from 17.6 to 8.8 km per pixel; 1x2 over the tall western
+       * slice does the same for its latitude axis. Failure of an individual sub-request leaves
+       * that quadrant blank rather than losing the region.
+       */
+      const [iodc, fes, kurdistan, precip] = await Promise.all([
+        fetchStitchedCloudMask(t, IODC_DISC_BBOX, 2, 2),
+        fetchStitchedCloudMask(t, FES_WEST_BBOX, 1, 2, 1024, 'msg_fes:clm'),
+        fetchEumetsatCloudMaskExtent(t, KURDISTAN_BBOX, 1536, 1536),
+        fetchEumetsatPrecipExtent(t, IODC_DISC_BBOX, 1024, 1024)
       ]);
+      if (current) setPrecipCanvas(precip);
       if (!current) return;
 
       setCoveragePct(iodc?.coveragePct ?? null);
@@ -243,6 +296,36 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     };
   }, []);
 
+  /**
+   * Fetch the neighbouring operators' satellites, once.
+   *
+   * EUMETSAT covers Europe, Africa and the Indian Ocean; these cover everything else. Together
+   * the four tile the planet, so no part of the globe is left bare.
+   */
+  useEffect(() => {
+    let current = true;
+    const date = isoDaysAgo(1);
+    Promise.all(
+      GEOSAT_REGIONS.map(async (region) => {
+        const canvas = await fetchGibsCanvas(
+          region.layer,
+          { minLon: region.minLon, minLat: region.minLat, maxLon: region.maxLon, maxLat: region.maxLat },
+          date,
+          1024,
+          1024
+        );
+        return [region.id, canvas] as const;
+      })
+    )
+      .then((entries) => {
+        if (current) setGeoSat(Object.fromEntries(entries));
+      })
+      .catch((err) => console.warn('[Cesium] neighbouring satellites unavailable:', err));
+    return () => {
+      current = false;
+    };
+  }, []);
+
   // ---- The paint stack ----------------------------------------------------------------------
   //
   // Built as ONE ordered stack. Adding the base clears the layer collection, so separate
@@ -254,45 +337,120 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     const layers = viewer.imageryLayers;
     layers.removeAll();
 
-    // 0 — the ground. NASA view swaps it for a dated NASA pass; the others use HD satellite.
+    /*
+     * GROUND — the only thing that belongs on the surface, so it is the only imagery layer.
+     */
     if (mode === 'nasa') {
       layers.add(createBaseMapLayer('nasa_today', nasaDate), 0);
     } else {
       layers.add(createBaseMapLayer('esri'), 0);
     }
-    let index = 1;
 
     /*
-     * 1 — LIVE view: the polar image faded by brightness. Dark greys fall away to transparent,
-     * whites stay at full strength, and every pixel in between is the satellite's own.
+     * WEATHER — hung ABOVE the ground, not painted on it.
+     *
+     * Imagery layers always drape on the globe surface, which is wrong for weather: cloud sits
+     * kilometres up and rain falls below it. These are rectangles with an image material at real
+     * altitudes, so the ground stays visible beneath translucent cloud and the layers stack the
+     * way the atmosphere does.
+     *
+     * Rebuilt from scratch each time — cheap, since it is a handful of entities, and it avoids
+     * tracking which sheet changed.
      */
-    if (mode === 'live' && polarCanvas) {
-      const polar = createPolarBrightnessFadedOverlay(
-        polarCanvas,
-        GLOBAL_BBOX,
-        'EUMETSAT Metop (polar orbiter)',
-        1
-      );
-      if (polar) layers.add(polar, index++);
+    for (const entity of viewer.entities.values.slice()) {
+      if (typeof entity.id === 'string' && entity.id.startsWith('__weather_')) {
+        viewer.entities.remove(entity);
+      }
     }
 
-    // 2 — RADAR view: the Meteosat cloud mask AND the precipitation layer, together.
+    const hangSheet = (
+      id: string,
+      canvas: HTMLCanvasElement | null,
+      extent: CloudMaskExtent,
+      heightM: number,
+      name: string
+    ) => {
+      if (!canvas) return;
+      viewer.entities.add({
+        id,
+        name,
+        rectangle: {
+          coordinates: Cesium.Rectangle.fromDegrees(
+            extent.minLon,
+            extent.minLat,
+            extent.maxLon,
+            extent.maxLat
+          ),
+          height: heightM,
+          material: new Cesium.ImageMaterialProperty({
+            image: canvas.toDataURL('image/png'),
+            transparent: true
+          })
+        }
+      });
+    };
+
+    if (mode === 'live' && polarCanvas) {
+      // Highest, since these are cold cloud tops seen from orbit.
+      hangSheet(
+        '__weather_polar',
+        buildPolarSheet(polarCanvas, GLOBAL_BBOX),
+        GLOBAL_BBOX,
+        5000,
+        'Metop polar cloud'
+      );
+    }
+
     if (mode === 'radar') {
-      for (const disc of overlays.clouds) {
-        const cloud = createCloudOverlay(disc.canvas, disc.extent, EUMETVIEW_CREDIT, 1);
-        if (cloud) layers.add(cloud, index++);
+      /*
+       * WHY THE RADAR IS AT 20 km, NOT 4 km.
+       *
+       * A 1,000 m separation was not enough. Cesium composites translucent geometry by DEPTH,
+       * and rain falls FROM cloud — so wherever the radar has data the cloud sheet has data in
+       * the same place, one kilometre below. At that spacing the deck still resolved in front of
+       * the rain and hid it, which is exactly what was reported: the radar was there, drawn
+       * underneath.
+       *
+       * A large separation makes the order unambiguous instead of a near-tie between two sheets
+       * a kilometre apart. 20 km is NOT a real altitude for rain — it is chosen purely so the
+       * layer cannot be occluded, and the trade is deliberate: visibility over physical order.
+       *
+       *     cloud deck  3,000 m
+       *     polar       5,000 m   (live view)
+       *     radar      20,000 m   <- deliberately above everything
+       *
+       * The radar is painted opaque as well, so it reads as a solid layer rather than a haze.
+       *
+       * WHY NOT 2,000-3,000 m, WHICH IS WHERE WEATHER ACTUALLY IS: at that height a sheet this
+       * large stops being drawn. Cesium horizon-culls geometry that sits too close to the
+       * ellipsoid across a wide extent, so the low version rendered NOTHING AT ALL — the layer
+       * simply vanished. 5,000/8,500 is the height range that actually draws, verified by the
+       * layer being visible at these values and invisible at the lower ones.
+       *
+       * The heights also clear almost all terrain (Kurdistan ~3,600 m), and terrain depth-testing
+       * is off so a sheet is never swallowed by a mountain it crosses.
+       */
+      if (showRadar && precipCanvas) {
+        hangSheet(
+          '__weather_rain',
+          buildRadarSheet(precipCanvas, IODC_DISC_BBOX),
+          IODC_DISC_BBOX,
+          20000,
+          'EUMETSAT precipitation'
+        );
       }
-      if (frameTime) {
-        layers.add(
-          createTiledEumetsatLayer('msg_iodc:h63', frameTime, IODC_DISC_BBOX, EUMETVIEW_CREDIT, true),
-          index++
+      let level = 0;
+      for (const disc of overlays.clouds) {
+        hangSheet(
+          `__weather_cloud_${level++}`,
+          buildCloudSheet(disc.canvas, disc.extent),
+          disc.extent,
+          3000,
+          'Meteosat cloud mask'
         );
       }
     }
-
-    // 3 — labels last, so place names read on top of whatever is painted.
-    layers.add(createLabelLayer(), index++);
-  }, [mode, nasaDate, polarCanvas, frameTime, overlays, ready]);
+  }, [mode, nasaDate, polarCanvas, precipCanvas, geoSat, showRadar, overlays, ready]);
 
   // ---- Sky, sun and relief ------------------------------------------------------------------
   // Sky is always on: a bare globe with no atmosphere reads as a rendering fault.

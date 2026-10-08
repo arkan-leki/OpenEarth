@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import * as THREE from 'three';
 import { ZoomEarthTopBar } from './components/ZoomEarthTopBar';
 import { ZoomEarthFloatingControls } from './components/ZoomEarthFloatingControls';
 import { KurdistanWeatherCard } from './components/KurdistanWeatherCard';
 import { WeatherSimulationView } from './components/WeatherSimulationView';
-import { GlobeStatus, GlobeMode } from './components/CesiumGlobe';
+import { GlobeStatus, GlobeMode, GlobeApi } from './components/CesiumGlobe';
 import { BASE_MAPS, BaseMapId, isoDaysAgo } from './services/cesiumBaseMaps';
 
 /**
@@ -33,57 +33,111 @@ const LEGACY_VIEW =
  * Cesium while the three.js canvas was being torn down lost the WebGL context and crashed the
  * React tree — so the two views are reached by navigation, never by a live swap.
  */
+/** Square icon button. Zoom Earth's toolbar is icons, not text, so it stays narrow. */
+const HudButton: React.FC<{
+  title: string;
+  onClick: () => void;
+  active?: boolean;
+  children: React.ReactNode;
+}> = ({ title, onClick, active, children }) => (
+  <button
+    title={title}
+    onClick={onClick}
+    className={`w-9 h-9 flex items-center justify-center rounded-lg border backdrop-blur-md text-[14px] leading-none transition-colors ${
+      active
+        ? 'bg-emerald-400/25 text-emerald-100 border-emerald-300/30'
+        : 'bg-[#0b111c]/85 text-slate-300 border-white/10 hover:text-white hover:bg-[#0b111c]'
+    }`}
+  >
+    {children}
+  </button>
+);
+
+const Chip: React.FC<{ children: React.ReactNode; className?: string }> = ({
+  children,
+  className = ''
+}) => (
+  <div
+    className={`bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl ${className}`}
+  >
+    {children}
+  </div>
+);
+
+/**
+ * The Cesium Earth, laid out the way Zoom Earth does it: chrome lives in the CORNERS and
+ * nowhere else, and the bottom is ONE flex row rather than several absolutely-positioned blocks.
+ *
+ * That is not cosmetic. Every overlap in this view came from stacking absolute panels that each
+ * knew nothing about the others, so a collision was inevitable at some window width. Flex
+ * containers with gaps cannot overlap by construction, which is the actual fix.
+ *
+ *   top-left      brand
+ *   top-right     icon toolbar, and the layers panel that drops beneath it
+ *   right-middle  zoom in / out
+ *   bottom row    status (left) · timeline (centre) · reserved gap for Cesium's credits
+ */
 const GlobeView: React.FC = () => {
-  /** Three views, one switch — no toggle sprawl. */
   const [mode, setMode] = useState<GlobeMode>('live');
   const [nasaDate, setNasaDate] = useState(() => isoDaysAgo(1));
   const [hoursAgo, setHoursAgo] = useState(0);
+  /** Radar on/off, independent of the cloud coverage it sits above. */
+  const [showRadar, setShowRadar] = useState(true);
   const [status, setStatus] = useState<GlobeStatus | null>(null);
+  const [globeApi, setGlobeApi] = useState<GlobeApi | null>(null);
+  const globeApiRef = useRef<GlobeApi | null>(null);
+  const askedForLocation = useRef(false);
+  const [locating, setLocating] = useState(false);
+
+  /**
+   * Ask for the visitor's location and fly there.
+   *
+   * Kurdistan is the DEFAULT and remains the view in every case except an explicit grant: if the
+   * browser declines, the prompt is dismissed, the API is missing, or the lookup times out, the
+   * camera simply stays on Kurdistan. Nothing here can leave the app with no view.
+   *
+   * Browsers only grant geolocation on a secure origin, so this works on localhost and on
+   * GitHub Pages (https) but not over plain http on a LAN address. Some browsers also require a
+   * user gesture, which is why the same call is wired to the ⌖ button rather than only running
+   * automatically.
+   */
+  const requestLocation = useCallback(() => {
+    if (!('geolocation' in navigator)) return;
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        globeApiRef.current?.flyTo(pos.coords.longitude, pos.coords.latitude, 150_000);
+      },
+      () => setLocating(false),
+      { timeout: 10_000, maximumAge: 600_000 }
+    );
+  }, []);
+
+  // Ask once, as soon as the globe can accept a flight.
+  useEffect(() => {
+    if (!globeApi || askedForLocation.current) return;
+    askedForLocation.current = true;
+    requestLocation();
+  }, [globeApi, requestLocation]);
 
   const MODES: Array<{ id: GlobeMode; label: string; hint: string }> = [
-    { id: 'live', label: 'SATELLITE LIVE', hint: 'HD satellite ground + Metop polar in colour' },
-    { id: 'nasa', label: 'NASA HD', hint: 'HD NASA imagery for a chosen date' },
-    { id: 'radar', label: 'EUMETSAT RADAR', hint: 'Meteosat cloud mask + EUMETSAT precipitation, stepped through hours' }
+    { id: 'live', label: 'Satellite Live', hint: 'HD satellite ground + Metop polar' },
+    { id: 'nasa', label: 'NASA HD', hint: 'NASA imagery for a chosen date' },
+    { id: 'radar', label: 'EUMETSAT Radar', hint: 'Meteosat cloud mask + precipitation' }
   ];
 
   const TIME_STEPS = [
     { hours: 0, label: 'LIVE' },
-    { hours: 6, label: '6H AGO' },
-    { hours: 12, label: '12H AGO' },
-    { hours: 24, label: '24H AGO' }
+    { hours: 6, label: '6H' },
+    { hours: 12, label: '12H' },
+    { hours: 24, label: '24H' }
   ];
 
   const frameLabel = status?.frameTime
     ? `${status.frameTime.toISOString().slice(11, 16)}Z`
     : '—';
-
-  const pill = (active: boolean) =>
-    `px-2.5 py-1.5 rounded-lg text-[10px] font-semibold tracking-wider transition-colors ${
-      active
-        ? 'bg-emerald-400/20 text-emerald-200'
-        : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
-    }`;
-
-  const toggle = (label: string, value: boolean, set: (v: boolean) => void) => (
-    <button
-      key={label}
-      onClick={() => set(!value)}
-      className={`flex items-center justify-between w-full px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors ${
-        value ? 'bg-emerald-400/15 text-emerald-200' : 'text-slate-400 hover:bg-white/5'
-      }`}
-    >
-      <span>{label}</span>
-      <span
-        className={`w-7 h-3.5 rounded-full relative ${value ? 'bg-emerald-400/70' : 'bg-slate-600/60'}`}
-      >
-        <span
-          className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-all ${
-            value ? 'left-3.5' : 'left-0.5'
-          }`}
-        />
-      </span>
-    </button>
-  );
+  const activeMode = MODES.find((m) => m.id === mode) ?? MODES[0];
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#07090E] select-none font-sans">
@@ -99,77 +153,107 @@ const GlobeView: React.FC = () => {
           mode={mode}
           nasaDate={nasaDate}
           frameHoursAgo={hoursAgo}
+          showRadar={showRadar}
           onStatus={setStatus}
+          onApi={(api) => {
+            globeApiRef.current = api;
+            setGlobeApi(api);
+          }}
         />
       </React.Suspense>
 
-      <div className="absolute inset-0 z-20 pointer-events-none">
-        {/* Ground imagery */}
-        <div className="absolute top-4 left-4 flex items-start gap-2">
-          <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl px-3 py-2 flex items-center gap-2.5 pointer-events-auto">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            <span className="text-[12px] font-semibold tracking-[0.18em] text-slate-100">
-              OPENEARTH
-            </span>
-          </div>
+      {/* TOP — brand left, toolbar right. Separate flex children, so they cannot collide. */}
+      <header className="absolute top-0 inset-x-0 z-20 flex items-start justify-between gap-3 p-3 pointer-events-none">
+        <Chip className="pointer-events-auto px-3 py-2 flex items-center gap-2.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span className="text-[12px] font-semibold tracking-[0.18em] text-slate-100">
+            OPENEARTH
+          </span>
+        </Chip>
 
-          <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1 flex items-center gap-0.5 pointer-events-auto">
-            {MODES.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => setMode(m.id)}
-                title={m.hint}
-                className={pill(mode === m.id)}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Per-mode controls — only what the current view actually needs */}
-        <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
-          {mode === 'nasa' && (
-            <div className="w-56 bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1.5 pointer-events-auto">
-              <div className="px-2.5 py-1.5">
-                <div className="text-[11px] text-slate-400 mb-1">NASA date</div>
-                <input
-                  type="date"
-                  value={nasaDate}
-                  max={isoDaysAgo(0)}
-                  onChange={(e) => setNasaDate(e.target.value)}
-                  className="w-full px-2 py-1 rounded-lg bg-white/5 border border-white/10 text-[11px] text-slate-200 font-mono"
-                />
-              </div>
-            </div>
-          )}
+        {/*
+          Right column: modes STACKED and always visible, then the view controls beneath them.
+          A single flex column at a fixed width, so nothing can overlap, and there is no hidden
+          panel to discover — an earlier version hid the modes behind a toolbar button, which
+          meant the primary choice in the app was invisible until you found a tiny icon.
+        */}
+        <div className="pointer-events-auto flex flex-col items-stretch gap-1.5 w-[9.5rem]">
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setMode(m.id)}
+              title={m.hint}
+              className={`px-2.5 py-2 rounded-lg border backdrop-blur-md text-left text-[10px] font-semibold tracking-wider transition-colors ${
+                mode === m.id
+                  ? 'bg-emerald-400/25 text-emerald-100 border-emerald-300/30'
+                  : 'bg-[#0b111c]/85 text-slate-300 border-white/10 hover:text-white'
+              }`}
+            >
+              {m.label.toUpperCase()}
+            </button>
+          ))}
 
           {mode === 'radar' && (
-            <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl p-1 flex items-center gap-0.5 pointer-events-auto">
-              {TIME_STEPS.map((t) => (
-                <button
-                  key={t.hours}
-                  onClick={() => setHoursAgo(t.hours)}
-                  title={`EUMETSAT precipitation from ${t.label.toLowerCase()}`}
-                  className={pill(hoursAgo === t.hours)}
-                >
-                  {t.label}
-                </button>
-              ))}
+            <button
+              onClick={() => setShowRadar((v) => !v)}
+              title="Show or hide the EUMETSAT precipitation (radar) sheet"
+              className={`px-2.5 py-2 rounded-lg border backdrop-blur-md text-left text-[10px] font-semibold tracking-wider transition-colors ${
+                showRadar
+                  ? 'bg-emerald-400/25 text-emerald-100 border-emerald-300/30'
+                  : 'bg-[#0b111c]/85 text-slate-500 border-white/10 hover:text-slate-300'
+              }`}
+            >
+              RADAR {showRadar ? 'ON' : 'OFF'}
+            </button>
+          )}
+
+          {mode === 'nasa' && (
+            <div className="bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-lg px-2 py-1.5">
+              <div className="text-[9px] uppercase tracking-wider text-slate-500 mb-1">Date</div>
+              <input
+                type="date"
+                value={nasaDate}
+                max={isoDaysAgo(0)}
+                onChange={(e) => setNasaDate(e.target.value)}
+                className="w-full bg-transparent text-[10px] text-slate-200 font-mono outline-none"
+              />
             </div>
           )}
-        </div>
 
-        {/* What is painted */}
-        <div className="absolute bottom-4 left-4 bg-[#0b111c]/85 backdrop-blur-md border border-white/10 rounded-xl shadow-2xl px-3 py-2 pointer-events-auto">
-          <div className="flex items-center gap-3 text-[10px] font-mono">
+          <div className="h-px bg-white/10 my-0.5" />
+
+          <div className="flex gap-1.5">
+            <HudButton title="Zoom in" onClick={() => globeApi?.zoomIn()}>
+              +
+            </HudButton>
+            <HudButton title="Zoom out" onClick={() => globeApi?.zoomOut()}>
+              −
+            </HudButton>
+            <HudButton
+              title={locating ? 'Locating…' : 'Go to my location'}
+              active={locating}
+              onClick={requestLocation}
+            >
+              ⌖
+            </HudButton>
+            <HudButton title="Reset to Kurdistan" onClick={() => globeApi?.resetView()}>
+              ⌂
+            </HudButton>
+          </div>
+        </div>
+      </header>
+
+      {/* BOTTOM — a single flex row: status · timeline · gap for the credits. */}
+      <footer className="absolute bottom-0 inset-x-0 z-20 flex items-end justify-between gap-3 p-3 pointer-events-none">
+        <Chip className="pointer-events-auto px-3 py-2">
+          <div className="flex items-center gap-3 text-[10px] font-mono whitespace-nowrap">
             <span className="flex items-center gap-1.5">
               <span
                 className={`w-1.5 h-1.5 rounded-full ${
                   status?.ready ? 'bg-emerald-400' : 'bg-amber-400'
                 }`}
               />
-              <span className="text-slate-300">{status?.ready ? 'PAINTED' : 'LOADING'}</span>
+              <span className="text-slate-300">{activeMode.label.toUpperCase()}</span>
             </span>
             <span className="text-slate-500">
               CLOUD <span className="text-slate-200">{status?.cloudCoveragePct ?? '—'}%</span>
@@ -177,21 +261,48 @@ const GlobeView: React.FC = () => {
             <span className="text-slate-500">
               FRAME <span className="text-slate-200">{frameLabel}</span>
             </span>
-            <span className="text-slate-500" title="Terrain tiles streamed on demand">
-              TERRAIN TILES <span className="text-slate-200">{status?.terrainTiles ?? 0}</span>
-            </span>
           </div>
 
-        </div>
+          {/*
+            Weather attribution.
+            Cesium's credit line only knows about imagery layers. Once the weather moved to
+            altitude sheets it stopped being an imagery layer, and the EUMETSAT credit silently
+            vanished from the screen — these are other people's satellites and they have to be
+            named, so the sources are stated here instead.
+          */}
+          {/*
+            Attribution for FOUR operators, not one. The globe is tiled from EUMETSAT's Meteosat
+            over Europe/Africa/Indian Ocean, NOAA's GOES pair over the Americas and Pacific, and
+            JMA's Himawari over east Asia. Each is a different organisation's data and each has to
+            be named — the Cesium credit line only tracks imagery layers, and these are sheets.
+          */}
+          <div className="mt-1 text-[9px] text-slate-600 whitespace-nowrap">
+            Weather: EUMETSAT Meteosat/Metop · NOAA-CIRA GeoColor (GOES-East/West) · JMA Himawari
+          </div>
+        </Chip>
 
-        <a
-          href="?view=legacy"
-          className="absolute bottom-4 right-4 z-30 px-3 py-2 rounded-xl bg-[#0b111c]/85 backdrop-blur-md border border-white/10 text-slate-300 text-[11px] font-mono tracking-wider hover:text-white transition-colors pointer-events-auto"
-          title="The old volumetric 3D view"
-        >
-          VOLUMETRIC VIEW →
-        </a>
-      </div>
+        {mode === 'radar' && (
+          <Chip className="pointer-events-auto p-1 flex items-center gap-0.5">
+            {TIME_STEPS.map((t) => (
+              <button
+                key={t.hours}
+                onClick={() => setHoursAgo(t.hours)}
+                title={`EUMETSAT frame ${t.label}`}
+                className={`px-3 py-1.5 rounded-lg text-[10px] font-semibold tracking-wider transition-colors ${
+                  hoursAgo === t.hours
+                    ? 'bg-emerald-400/20 text-emerald-200'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </Chip>
+        )}
+
+        {/* Reserves the bottom-right corner so Cesium's credits never sit under the timeline. */}
+        <div className="w-24 shrink-0" />
+      </footer>
     </div>
   );
 };
