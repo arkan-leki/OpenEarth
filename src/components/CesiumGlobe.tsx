@@ -374,7 +374,8 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
 
     (async () => {
       try {
-        const url = new URL('data/ne_110m_admin_0_countries.geojson', document.baseURI).href;
+        // 50m, not 110m: twice the coastline and border detail for the same job.
+        const url = new URL('data/countries_50m.geojson', document.baseURI).href;
         const ds = await Cesium.GeoJsonDataSource.load(url, {
           stroke: Cesium.Color.fromCssColorString('#7dd3fc'),
           fill: Cesium.Color.fromCssColorString('#7dd3fc').withAlpha(0.04),
@@ -400,40 +401,71 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       }
     })();
 
-    (async () => {
+    /*
+     * Place names, in two tiers.
+     *
+     * The global set is 1:50m and thins out badly over Iraq — a handful of cities where there
+     * are dozens of towns. So the region gets a second, denser set extracted from Natural
+     * Earth's 1:10m data: 254 named places across the Middle East, filtered at build time from
+     * a 4.9 MB source down to 43 KB.
+     *
+     * The global set then SKIPS that window, or every place in it would be labelled twice,
+     * once from each file, a few pixels apart.
+     */
+    const REGION = { lon0: 33, lat0: 24, lon1: 56, lat1: 43 };
+
+    const addPlaces = (features: any[], labelLength: number) => {
+      for (const feature of features) {
+        const props = feature.properties ?? {};
+        const coords = feature.geometry?.coordinates;
+        const lon = coords?.[0];
+        const lat = coords?.[1];
+        if (typeof lon !== 'number' || typeof lat !== 'number') continue;
+
+        viewer.entities.add({
+          id: `__place_${props.name}_${lon}_${lat}`,
+          position: Cesium.Cartesian3.fromDegrees(lon, lat, 26000),
+          label: {
+            text: String(props.name ?? ''),
+            font: '11px sans-serif',
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            fillColor: Cesium.Color.WHITE,
+            outlineColor: Cesium.Color.fromCssColorString('#0b111c'),
+            outlineWidth: 2,
+            pixelOffset: new Cesium.Cartesian2(0, -8),
+            // The line that makes the difference: without it the label depth-tests against the
+            // weather in front of it and disappears.
+            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, labelLength)
+          }
+        });
+      }
+    };
+
+    const loadPlaces = async (file: string, filter?: (lon: number, lat: number) => boolean) => {
       try {
-        const url = new URL('data/ne_50m_populated_places_simple.geojson', document.baseURI).href;
+        const url = new URL(`data/${file}`, document.baseURI).href;
         const geo = await (await fetch(url)).json();
         if (disposed || viewer.isDestroyed()) return;
-
-        for (const feature of geo.features ?? []) {
-          const props = feature.properties ?? {};
-          const coords = feature.geometry?.coordinates;
-          const lon = coords?.[0];
-          const lat = coords?.[1];
-          if (typeof lon !== 'number' || typeof lat !== 'number') continue;
-
-          viewer.entities.add({
-            id: `__place_${props.name}_${lon}_${lat}`,
-            position: Cesium.Cartesian3.fromDegrees(lon, lat, 26000),
-            label: {
-              text: String(props.name ?? ''),
-              font: '11px sans-serif',
-              style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-              fillColor: Cesium.Color.WHITE,
-              outlineColor: Cesium.Color.fromCssColorString('#0b111c'),
-              outlineWidth: 2,
-              pixelOffset: new Cesium.Cartesian2(0, -8),
-              // The line that makes the difference: without it the label depth-tests against
-              // the weather and disappears behind it.
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-              distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 9_000_000)
-            }
+        let features = geo.features ?? [];
+        if (filter) {
+          features = features.filter((f: any) => {
+            const c = f.geometry?.coordinates;
+            return typeof c?.[0] === 'number' && filter(c[0], c[1]);
           });
         }
+        addPlaces(features, 9_000_000);
       } catch (err) {
-        console.warn('[Cesium] place names unavailable:', err);
+        console.warn(`[Cesium] ${file} unavailable:`, err);
       }
+    };
+
+    // Global coverage first, then the denser regional set on top of it.
+    (async () => {
+      await loadPlaces('ne_50m_populated_places_simple.geojson', (lon, lat) =>
+        lon < REGION.lon0 || lon > REGION.lon1 || lat < REGION.lat0 || lat > REGION.lat1
+      );
+      await loadPlaces('places_middle_east.geojson');
     })();
 
     return () => {
