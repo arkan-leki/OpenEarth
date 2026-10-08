@@ -179,6 +179,29 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
       scene.globe.depthTestAgainstTerrain = false;
       scene.skyAtmosphere.show = true;
       scene.globe.showGroundAtmosphere = true;
+
+      /*
+       * ATMOSPHERE QUALITY — the improvements from Cesium's 2022 atmosphere work are in this
+       * build, but the headline one ships DISABLED.
+       *
+       * `highDynamicRange` is false by default (confirmed: the shipped bundle initialises it to
+       * false). Enabling it is what produces the "new default lighting on terrain" from that
+       * work — physically-based tonemapping, so the sun, the sky gradient and the ground all
+       * respond on the same scale instead of clipping. This is the atmosphere post-processing,
+       * NOT the bloom/ambient-occlusion stages that broke the render earlier: no extra buffers,
+       * no debug output, just the tonemapper.
+       *
+       * Guarded on `highDynamicRangeSupported`, because on a GPU that cannot do it the failure
+       * mode is a broken frame rather than a thrown error — which is exactly how the ambient
+       * occlusion attempt produced a black globe with red debug output.
+       */
+      if (scene.highDynamicRangeSupported) {
+        scene.highDynamicRange = true;
+      }
+
+      // Per-fragment scattering instead of per-vertex: "better looking atmosphere with a slight
+      // performance penalty", per Cesium's own docs. Smooths the horizon gradient.
+      scene.skyAtmosphere.perFragmentAtmosphere = true;
       scene.fog.enabled = true;
       if (scene.skyBox) scene.skyBox.show = true;
       scene.sun.show = true;
