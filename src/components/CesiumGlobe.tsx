@@ -357,9 +357,14 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
    * and names were invisible wherever weather covered them — which is most of the map. Neither
    * was missing; both were underneath.
    *
-   * So they are geometry now, placed above the highest weather sheet:
-   *   country borders   polygons at 24,000 m (radar tops out at 20,000)
-   *   place names       labels with disableDepthTestDistance, which renders them over everything
+   * So they are geometry now, drawn ON the terrain so they read as map furniture rather than
+   * something suspended in the sky:
+   *   country borders   polygons clamped to the ground
+   *   place names       labels clamped to the ground
+   *
+   * An earlier attempt lifted them 24-26 km up, above the weather. That was wrong: borders
+   * describe the ground and must sit at ground level, and the labels hung in the atmosphere with
+   * visible parallax against the terrain beneath them.
    *
    * Data is Natural Earth — public domain, no key, no ion token. 177 countries and 1251 named
    * places. URLs are built against document.baseURI because the app deploys under /OpenEarth/
@@ -380,15 +385,18 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
           stroke: Cesium.Color.fromCssColorString('#7dd3fc'),
           fill: Cesium.Color.fromCssColorString('#7dd3fc').withAlpha(0.04),
           strokeWidth: 1.6,
-          clampToGround: false
+          // ON the ground, following the terrain — a map layer, not something suspended in the
+          // atmosphere. Floating these at 24 km was wrong: it made them hang above the world
+          // with visible parallax against the ground they were describing.
+          clampToGround: true
         });
         // Never added, so nothing owns it; DataSource has no destroy() — it is released with
         // the collection. Just drop the reference.
         if (disposed || viewer.isDestroyed()) return;
-        // Lift every polygon clear of the weather so no sheet can occlude it.
+        // Outlines only; no artificial height. `clampToGround` above already put these on the
+        // terrain, which is where a border belongs.
         for (const entity of ds.entities.values) {
           if (!entity.polygon) continue;
-          entity.polygon.height = new Cesium.ConstantProperty(24000);
           entity.polygon.outline = new Cesium.ConstantProperty(true);
           entity.polygon.outlineColor = new Cesium.ConstantProperty(
             Cesium.Color.fromCssColorString('#7dd3fc')
@@ -446,7 +454,9 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
 
         viewer.entities.add({
           id: `__place_${props.name}_${lon}_${lat}`,
-          position: Cesium.Cartesian3.fromDegrees(lon, lat, 26000),
+          // Ground level: no altitude, and clamped to the terrain so a label in the mountains
+          // sits on the slope rather than at sea level or in the air.
+          position: Cesium.Cartesian3.fromDegrees(lon, lat, 0),
           label: {
             text: String(props.name ?? ''),
             font: '11px sans-serif',
@@ -455,9 +465,10 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
             outlineColor: Cesium.Color.fromCssColorString('#0b111c'),
             outlineWidth: 2,
             pixelOffset: new Cesium.Cartesian2(0, -8),
-            // The line that makes the difference: without it the label depth-tests against the
-            // weather in front of it and disappears.
-            disableDepthTestDistance: Number.POSITIVE_INFINITY,
+            // A map label belongs on the map. It depth-tests normally, so terrain and anything
+            // drawn above it occludes it the way you would expect. Previously it floated at
+            // 26 km with depth testing disabled, which made every name hang in the sky.
+            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
             distanceDisplayCondition: new Cesium.DistanceDisplayCondition(
               0,
               visibilityRange(population)
