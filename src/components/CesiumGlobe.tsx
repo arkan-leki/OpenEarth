@@ -359,7 +359,7 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
    *
    * So they are geometry now, drawn ON the terrain so they read as map furniture rather than
    * something suspended in the sky:
-   *   country borders   polygons clamped to the ground
+   *   country borders   boundary LINES clamped to the ground
    *   place names       labels clamped to the ground
    *
    * An earlier attempt lifted them 24-26 km up, above the weather. That was wrong: borders
@@ -380,27 +380,33 @@ export const CesiumGlobe: React.FC<CesiumGlobeProps> = ({
     (async () => {
       try {
         // 50m, not 110m: twice the coastline and border detail for the same job.
-        const url = new URL('data/countries_50m.geojson', document.baseURI).href;
+        /*
+         * BOUNDARY LINES, not country polygons.
+         *
+         * Polygons were the obvious source, and they do not work: Cesium refuses to draw outlines
+         * on terrain-clamped polygon geometry — it logs "Entity geometry outlines are unsupported
+         * on terrain. Outlines will be disabled." So clamping the polygons to the ground, which is
+         * what makes borders sit on the terrain, silently deleted the borders themselves.
+         *
+         * Polyline geometry has no such restriction and clamps properly, so borders follow the
+         * terrain — visible over Kurdistan's mountains rather than buried at sea level.
+         */
+        const url = new URL('data/ne_50m_admin_0_boundary_lines_land.geojson', document.baseURI).href;
         const ds = await Cesium.GeoJsonDataSource.load(url, {
           stroke: Cesium.Color.fromCssColorString('#7dd3fc'),
-          fill: Cesium.Color.fromCssColorString('#7dd3fc').withAlpha(0.04),
-          strokeWidth: 1.6,
-          // ON the ground, following the terrain — a map layer, not something suspended in the
-          // atmosphere. Floating these at 24 km was wrong: it made them hang above the world
-          // with visible parallax against the ground they were describing.
+          strokeWidth: 2,
           clampToGround: true
         });
         // Never added, so nothing owns it; DataSource has no destroy() — it is released with
         // the collection. Just drop the reference.
         if (disposed || viewer.isDestroyed()) return;
-        // Outlines only; no artificial height. `clampToGround` above already put these on the
-        // terrain, which is where a border belongs.
         for (const entity of ds.entities.values) {
-          if (!entity.polygon) continue;
-          entity.polygon.outline = new Cesium.ConstantProperty(true);
-          entity.polygon.outlineColor = new Cesium.ConstantProperty(
+          if (!entity.polyline) continue;
+          entity.polyline.clampToGround = new Cesium.ConstantProperty(true);
+          entity.polyline.material = new Cesium.ColorMaterialProperty(
             Cesium.Color.fromCssColorString('#7dd3fc')
           );
+          entity.polyline.width = new Cesium.ConstantProperty(2);
         }
         borders = ds;
         viewer.dataSources.add(ds);
